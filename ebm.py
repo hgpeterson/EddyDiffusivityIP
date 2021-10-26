@@ -77,20 +77,26 @@ class EBM():
             Q = (self.Q[i+1] + self.Q[i])/2
 
             # stamp integral componenta for interior nodes
-            if i != 0:
-                rcd = add_node(rcd, i, i,     m0*m0*D*integral)
-                rcd = add_node(rcd, i, i+1,   m0*m1*D*integral)
-                b[i]   += Q*(b0*x1 + m0*x1**2/2 - (b0*x0 + m0*x0**2/2))
-            if i != self.n-2:
-                rcd = add_node(rcd, i+1, i,   m1*m0*D*integral)
-                rcd = add_node(rcd, i+1, i+1, m1*m1*D*integral)
-                b[i+1] += Q*(b1*x1 + m1*x1**2/2 - (b1*x0 + m1*x0**2/2))
+            # if i != 0:
+            #     rcd = add_node(rcd, i, i,     m0*m0*D*integral)
+            #     rcd = add_node(rcd, i, i+1,   m0*m1*D*integral)
+            #     b[i]   += Q*(b0*x1 + m0*x1**2/2 - (b0*x0 + m0*x0**2/2))
+            # if i != self.n-2:
+            #     rcd = add_node(rcd, i+1, i,   m1*m0*D*integral)
+            #     rcd = add_node(rcd, i+1, i+1, m1*m1*D*integral)
+            #     b[i+1] += Q*(b1*x1 + m1*x1**2/2 - (b1*x0 + m1*x0**2/2))
+            rcd = add_node(rcd, i, i,     m0*m0*D*integral)
+            rcd = add_node(rcd, i, i+1,   m0*m1*D*integral)
+            rcd = add_node(rcd, i+1, i,   m1*m0*D*integral)
+            rcd = add_node(rcd, i+1, i+1, m1*m1*D*integral)
+            b[i]   += Q*(b0*x1 + m0*x1**2/2 - (b0*x0 + m0*x0**2/2))
+            b[i+1] += Q*(b1*x1 + m1*x1**2/2 - (b1*x0 + m1*x0**2/2))
 
-        # set h on boundaries
-        rcd = add_node(rcd, 0, 0, 1)
-        rcd = add_node(rcd, self.n-1, self.n-1, 1)
-        b[0] = 2.4e6
-        b[self.n-1] = 2.4e6
+        # # set h on boundaries
+        # rcd = add_node(rcd, 0, 0, 1)
+        # rcd = add_node(rcd, self.n-1, self.n-1, 1)
+        # b[0] = 2.4e6
+        # b[self.n-1] = 2.4e6
 
         # assemble sparse matrix
         A = csc_matrix((rcd[:, 2], (rcd[:, 0], rcd[:, 1])), shape=(self.n, self.n))
@@ -116,7 +122,7 @@ class EBM():
 n = 2**8
 x = np.linspace(-1, 1, n)
 Q = 1365/np.pi*np.cos(np.arcsin(x))
-Q -= Q.mean()
+Q -= np.trapz(Q, x)/2
 D = 2.6e-4*np.ones(n)
 
 # solve
