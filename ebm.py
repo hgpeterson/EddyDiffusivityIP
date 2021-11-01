@@ -8,14 +8,8 @@ plt.style.use("plots.mplstyle")
 # Constants 
 ps = 98000     # kg/m/s2
 cp = 1005      # J/kg/K
-g = 9.81       # m/s2
-D = 1.06e6     # m2/s
-Re = 6.371e6   # m
 RH = 0.8       # 0-1
-S0 = 1365      # J/m2/s
-R = 287.058    # J/kg/K
 Lv = 2257000   # J/kg
-sig = 5.67e-8  # J/s/m2/K4
 
 def add_node(rcd, r, c, d):
     """
@@ -42,13 +36,13 @@ def basis_vector(I, i):
     b = I[j]/(I[j] - I[i])
     return m, b 
 
-def gquad2(f, a, b):
-    x = np.array([-1/np.sqrt(3), 1/np.sqrt(3)])
-    x = (b - a)/2 * x + (a + b)/2
-    return (b - a)/2 * (f(x[0]) + f(x[1]))
+# def gquad2(f, a, b):
+#     x = np.array([-1/np.sqrt(3), 1/np.sqrt(3)])
+#     x = (b - a)/2 * x + (a + b)/2
+#     return (b - a)/2 * (f(x[0]) + f(x[1]))
 
-def lerp(p0, p1, x):
-    return p0[1]*(x - p1[0])/(p0[0] - p1[0]) + p1[1]*(x - p0[0])/(p1[0] - p0[0])
+# def lerp(p0, p1, x):
+#     return p0[1]*(x - p1[0])/(p0[0] - p1[0]) + p1[1]*(x - p0[0])/(p1[0] - p0[0])
 
 def humidsat(t, p):
     """
@@ -105,11 +99,13 @@ class EBM():
     is designed to take x, Q, and D as inputs and output h.
     """
 
-    def __init__(self, x, Q, D):
+    def __init__(self, x, Q, D, hs, hn):
         # givens
-        self.x = x # grid (sine latitude)
-        self.Q = Q # net energy input (W m-2)
-        self.D = D # eddy diffusivity (kg m-2 s-1)
+        self.x = x   # grid (sine latitude)
+        self.Q = Q   # net energy input (W m-2)
+        self.D = D   # eddy diffusivity (kg m-2 s-1)
+        self.hs = hs # south pole moist static energy (J kg-1)
+        self.hn = hn # north pole moist static energy (J kg-1)
 
         # computables
         self.n = len(x) # number of grid points
@@ -151,18 +147,12 @@ class EBM():
                 rcd = add_node(rcd, i+1, i,   m1*m0*D*integral)
                 rcd = add_node(rcd, i+1, i+1, m1*m1*D*integral)
                 b[i+1] += Q*(b1*x1 + m1*x1**2/2 - (b1*x0 + m1*x0**2/2))
-            # rcd = add_node(rcd, i, i,     m0*m0*D*integral)
-            # rcd = add_node(rcd, i, i+1,   m0*m1*D*integral)
-            # rcd = add_node(rcd, i+1, i,   m1*m0*D*integral)
-            # rcd = add_node(rcd, i+1, i+1, m1*m1*D*integral)
-            # b[i]   += Q*(b0*x1 + m0*x1**2/2 - (b0*x0 + m0*x0**2/2))
-            # b[i+1] += Q*(b1*x1 + m1*x1**2/2 - (b1*x0 + m1*x0**2/2))
 
         # set h on boundaries
         rcd = add_node(rcd, 0, 0, 1)
         rcd = add_node(rcd, self.n-1, self.n-1, 1)
-        b[0] = hs # south pole
-        b[self.n-1] = hn # north pole
+        b[0] = self.hs        # south pole
+        b[self.n-1] = self.hn # north pole
 
         # assemble sparse matrix
         A = csc_matrix((rcd[:, 2], (rcd[:, 0], rcd[:, 1])), shape=(self.n, self.n))
@@ -184,30 +174,29 @@ class EBM():
 
         return h
 
-T_dataset = np.arange(100, 400, 1e-3)
-q_dataset = humidsat(T_dataset, ps/100)[1]
-h_dataset = cp*T_dataset + RH*q_dataset*Lv
+# T_dataset = np.arange(100, 400, 1e-3)
+# q_dataset = humidsat(T_dataset, ps/100)[1]
+# h_dataset = cp*T_dataset + RH*q_dataset*Lv
 
-p0 = [0, 1]
-p1 = [2, 10]
-x = np.linspace(0, 2, 100)
-plt.plot(x, lerp(p0, p1, x))
-plt.show()
-# # setup test problem
-# n = 2**8 +1
-# x = np.linspace(-1, 1, n)
-# Q = 1365/np.pi*np.cos(np.arcsin(x))
-# Q -= np.trapz(Q, x)/2
-# D = 2.6e-4*np.ones(n)
-# hs = hn = 2.4e4
+# setup test problem
+n = 2**8
+x = np.linspace(-1, 1, n)
+Q = 1365/np.pi*np.cos(np.arcsin(x))
+Q -= np.trapz(Q, x)/2
+D = 2.6e-4*np.ones(n)
+hs = hn = 2.4e5
 
-# # solve
-# ebm = EBM(x, Q, D)
-# h = ebm.solve()
+# solve
+ebm = EBM(x, Q, D, hs, hn)
+h = ebm.solve()
 
-# # plot
-# plt.plot(x, h)
-# plt.show()
+# plot
+plt.plot(x, h/1e3)
+plt.xlabel("$x$")
+plt.ylabel("$h$ (kJ kg$^{-1}$)")
+plt.tight_layout()
+plt.savefig("h.png")
+plt.close()
 
 # # real data
 # data = np.load("Ts.npz")
