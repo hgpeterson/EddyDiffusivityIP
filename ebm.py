@@ -3,6 +3,20 @@ from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import splu
 import matplotlib.pyplot as plt
 
+plt.style.use("plots.mplstyle")
+
+# Constants 
+ps = 98000     # kg/m/s2
+cp = 1005      # J/kg/K
+g = 9.81       # m/s2
+D = 1.06e6     # m2/s
+Re = 6.371e6   # m
+RH = 0.8       # 0-1
+S0 = 1365      # J/m2/s
+R = 287.058    # J/kg/K
+Lv = 2257000   # J/kg
+sig = 5.67e-8  # J/s/m2/K4
+
 def add_node(rcd, r, c, d):
     """
         rcd = add_node(rcd, r, c, d)
@@ -27,6 +41,58 @@ def basis_vector(I, i):
     m = -1/(I[j] - I[i])
     b = I[j]/(I[j] - I[i])
     return m, b 
+
+def gquad2(f, a, b):
+    x = np.array([-1/np.sqrt(3), 1/np.sqrt(3)])
+    x = (b - a)/2 * x + (a + b)/2
+    return (b - a)/2 * (f(x[0]) + f(x[1]))
+
+def lerp(p0, p1, x):
+    return p0[1]*(x - p1[0])/(p0[0] - p1[0]) + p1[1]*(x - p0[0])/(p1[0] - p0[0])
+
+def humidsat(t, p):
+    """
+    FROM BOOS:
+    % esat, qsat, rsat = humidsat(t, p)
+    %  computes saturation vapor pressure (esat), saturation specific humidity (qsat),
+    %  and saturation mixing ratio (rsat) given inputs temperature (t) in K and
+    %  pressure (p) in hPa.
+    %
+    %  these are all computed using the modified Tetens-like formulae given by
+    %  Buck (1981, J. Appl. Meteorol.)
+    %  for vapor pressure over liquid water at temperatures over 0 C, and for
+    %  vapor pressure over ice at temperatures below -23 C, and a quadratic
+    %  polynomial interpolation for intermediate temperatures.
+    """
+    tc=t-273.16;
+    tice=-23;
+    t0=0;
+    Rd=287.04;
+    Rv=461.5;
+    epsilon=Rd/Rv;
+
+    # first compute saturation vapor pressure over water
+    ewat=(1.0007+(3.46e-6*p))*6.1121*np.exp(17.502*tc/(240.97+tc))
+    eice=(1.0003+(4.18e-6*p))*6.1115*np.exp(22.452*tc/(272.55+tc))
+    # alternatively don"t use enhancement factor for non-ideal gas correction
+    #ewat=6.1121.*exp(17.502.*tc./(240.97+tc));
+    #eice=6.1115.*exp(22.452.*tc./(272.55+tc));
+    eint=eice+(ewat-eice)*((tc-tice)/(t0-tice))**2
+
+    esat=eint
+    esat[np.where(tc<tice)]=eice[np.where(tc<tice)]
+    esat[np.where(tc>t0)]=ewat[np.where(tc>t0)]
+
+    # now convert vapor pressure to specific humidity and mixing ratio
+    rsat=epsilon*esat/(p-esat);
+    qsat=epsilon*esat/(p-esat*(1-epsilon));
+    return esat, qsat, rsat
+
+def h(T):
+    return cp*T + RH*Lv*humidsat(T, ps/100)[1]
+
+def T(h):
+    return T_dataset[np.searchsorted(h_dataset, h)]
 
 class EBM():
     """
@@ -77,26 +143,26 @@ class EBM():
             Q = (self.Q[i+1] + self.Q[i])/2
 
             # stamp integral componenta for interior nodes
-            # if i != 0:
-            #     rcd = add_node(rcd, i, i,     m0*m0*D*integral)
-            #     rcd = add_node(rcd, i, i+1,   m0*m1*D*integral)
-            #     b[i]   += Q*(b0*x1 + m0*x1**2/2 - (b0*x0 + m0*x0**2/2))
-            # if i != self.n-2:
-            #     rcd = add_node(rcd, i+1, i,   m1*m0*D*integral)
-            #     rcd = add_node(rcd, i+1, i+1, m1*m1*D*integral)
-            #     b[i+1] += Q*(b1*x1 + m1*x1**2/2 - (b1*x0 + m1*x0**2/2))
-            rcd = add_node(rcd, i, i,     m0*m0*D*integral)
-            rcd = add_node(rcd, i, i+1,   m0*m1*D*integral)
-            rcd = add_node(rcd, i+1, i,   m1*m0*D*integral)
-            rcd = add_node(rcd, i+1, i+1, m1*m1*D*integral)
-            b[i]   += Q*(b0*x1 + m0*x1**2/2 - (b0*x0 + m0*x0**2/2))
-            b[i+1] += Q*(b1*x1 + m1*x1**2/2 - (b1*x0 + m1*x0**2/2))
+            if i != 0:
+                rcd = add_node(rcd, i, i,     m0*m0*D*integral)
+                rcd = add_node(rcd, i, i+1,   m0*m1*D*integral)
+                b[i]   += Q*(b0*x1 + m0*x1**2/2 - (b0*x0 + m0*x0**2/2))
+            if i != self.n-2:
+                rcd = add_node(rcd, i+1, i,   m1*m0*D*integral)
+                rcd = add_node(rcd, i+1, i+1, m1*m1*D*integral)
+                b[i+1] += Q*(b1*x1 + m1*x1**2/2 - (b1*x0 + m1*x0**2/2))
+            # rcd = add_node(rcd, i, i,     m0*m0*D*integral)
+            # rcd = add_node(rcd, i, i+1,   m0*m1*D*integral)
+            # rcd = add_node(rcd, i+1, i,   m1*m0*D*integral)
+            # rcd = add_node(rcd, i+1, i+1, m1*m1*D*integral)
+            # b[i]   += Q*(b0*x1 + m0*x1**2/2 - (b0*x0 + m0*x0**2/2))
+            # b[i+1] += Q*(b1*x1 + m1*x1**2/2 - (b1*x0 + m1*x0**2/2))
 
-        # # set h on boundaries
-        # rcd = add_node(rcd, 0, 0, 1)
-        # rcd = add_node(rcd, self.n-1, self.n-1, 1)
-        # b[0] = 2.4e6
-        # b[self.n-1] = 2.4e6
+        # set h on boundaries
+        rcd = add_node(rcd, 0, 0, 1)
+        rcd = add_node(rcd, self.n-1, self.n-1, 1)
+        b[0] = hs # south pole
+        b[self.n-1] = hn # north pole
 
         # assemble sparse matrix
         A = csc_matrix((rcd[:, 2], (rcd[:, 0], rcd[:, 1])), shape=(self.n, self.n))
@@ -118,17 +184,46 @@ class EBM():
 
         return h
 
-# setup test problem
-n = 2**8
-x = np.linspace(-1, 1, n)
-Q = 1365/np.pi*np.cos(np.arcsin(x))
-Q -= np.trapz(Q, x)/2
-D = 2.6e-4*np.ones(n)
+T_dataset = np.arange(100, 400, 1e-3)
+q_dataset = humidsat(T_dataset, ps/100)[1]
+h_dataset = cp*T_dataset + RH*q_dataset*Lv
 
-# solve
-ebm = EBM(x, Q, D)
-h = ebm.solve()
-
-# plot
-plt.plot(x, h)
+p0 = [0, 1]
+p1 = [2, 10]
+x = np.linspace(0, 2, 100)
+plt.plot(x, lerp(p0, p1, x))
 plt.show()
+# # setup test problem
+# n = 2**8 +1
+# x = np.linspace(-1, 1, n)
+# Q = 1365/np.pi*np.cos(np.arcsin(x))
+# Q -= np.trapz(Q, x)/2
+# D = 2.6e-4*np.ones(n)
+# hs = hn = 2.4e4
+
+# # solve
+# ebm = EBM(x, Q, D)
+# h = ebm.solve()
+
+# # plot
+# plt.plot(x, h)
+# plt.show()
+
+# # real data
+# data = np.load("Ts.npz")
+# Ts = data["Ts"]
+# lat = data["lat"]
+# n = len(lat)
+
+# h = h(Ts)
+
+# x = np.sin(lat*np.pi/180)
+# # Q = 1365/np.pi*np.cos(np.arcsin(x))
+# # Q -= np.trapz(Q, x)/2
+# # D = 0.649*np.ones(n) # W m-2 K-1
+# # hs = Ts[0]
+# # hn = Ts[-1]
+# # ebm = EBM(x, Q, D)
+# # h = ebm.solve()
+# plt.plot(x, h/1e3)
+# plt.show()
