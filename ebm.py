@@ -1,15 +1,70 @@
 import numpy as np
 from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import splu
-import matplotlib.pyplot as plt
-
-plt.style.use("plots.mplstyle")
 
 # Constants 
-ps = 98000     # kg/m/s2
-cp = 1005      # J/kg/K
-RH = 0.8       # 0-1
-Lv = 2257000   # J/kg
+ps = 98000     # surface pressure (kg m-1 s-2)
+cp = 1005      # specific heat capacity at constant pressure (J kg-1 K-1)
+RH = 0.8       # relative humidity (0-1)
+Lv = 2257000   # latent heat of vaporization (J kg-1)
+
+def humidsat(t, p):
+    """
+        esat, qsat, rsat = humidsat(t, p)
+
+    Computes saturation vapor pressure (esat), saturation specific humidity (qsat),
+    and saturation mixing ratio (rsat) given inputs temperature (t) in K and
+    pressure (p) in hPa.
+    
+    These are all computed using the modified Tetens-like formulae given by
+    Buck (1981, J. Appl. Meteorol.) for vapor pressure over liquid water at 
+    temperatures over 0 C, and for vapor pressure over ice at temperatures 
+    below -23 C, and a quadratic polynomial interpolation for intermediate temperatures.
+    """
+    tc=t-273.16;
+    tice=-23;
+    t0=0;
+    Rd=287.04;
+    Rv=461.5;
+    epsilon=Rd/Rv;
+
+    # first compute saturation vapor pressure over water
+    ewat=(1.0007+(3.46e-6*p))*6.1121*np.exp(17.502*tc/(240.97+tc))
+    eice=(1.0003+(4.18e-6*p))*6.1115*np.exp(22.452*tc/(272.55+tc))
+    # alternatively don"t use enhancement factor for non-ideal gas correction
+    #ewat=6.1121.*exp(17.502.*tc./(240.97+tc));
+    #eice=6.1115.*exp(22.452.*tc./(272.55+tc));
+    eint=eice+(ewat-eice)*((tc-tice)/(t0-tice))**2
+
+    esat=eint
+    esat[np.where(tc<tice)]=eice[np.where(tc<tice)]
+    esat[np.where(tc>t0)]=ewat[np.where(tc>t0)]
+
+    # now convert vapor pressure to specific humidity and mixing ratio
+    rsat=epsilon*esat/(p-esat);
+    qsat=epsilon*esat/(p-esat*(1-epsilon));
+    return esat, qsat, rsat
+
+# datasets of T, q, and h to be able to convert from one to the other
+T_dataset = np.arange(100, 400, 1e-3)
+q_dataset = humidsat(T_dataset, ps/100)[1]
+h_dataset = cp*T_dataset + RH*q_dataset*Lv
+
+def h(T):
+    """
+        h = h(T)
+
+    Compute h = cp*T + RH*Lv*q(T).
+    """
+    return cp*T + RH*Lv*humidsat(T, ps/100)[1]
+
+def T(h):
+    """
+        T = T(h)
+
+    Compute T from h = cp*T + RH*Lv*q(T).
+    """
+    return T_dataset[np.searchsorted(h_dataset, h)]
 
 def add_node(rcd, r, c, d):
     """
@@ -43,50 +98,6 @@ def basis_vector(I, i):
 
 # def lerp(p0, p1, x):
 #     return p0[1]*(x - p1[0])/(p0[0] - p1[0]) + p1[1]*(x - p0[0])/(p1[0] - p0[0])
-
-def humidsat(t, p):
-    """
-    FROM BOOS:
-    % esat, qsat, rsat = humidsat(t, p)
-    %  computes saturation vapor pressure (esat), saturation specific humidity (qsat),
-    %  and saturation mixing ratio (rsat) given inputs temperature (t) in K and
-    %  pressure (p) in hPa.
-    %
-    %  these are all computed using the modified Tetens-like formulae given by
-    %  Buck (1981, J. Appl. Meteorol.)
-    %  for vapor pressure over liquid water at temperatures over 0 C, and for
-    %  vapor pressure over ice at temperatures below -23 C, and a quadratic
-    %  polynomial interpolation for intermediate temperatures.
-    """
-    tc=t-273.16;
-    tice=-23;
-    t0=0;
-    Rd=287.04;
-    Rv=461.5;
-    epsilon=Rd/Rv;
-
-    # first compute saturation vapor pressure over water
-    ewat=(1.0007+(3.46e-6*p))*6.1121*np.exp(17.502*tc/(240.97+tc))
-    eice=(1.0003+(4.18e-6*p))*6.1115*np.exp(22.452*tc/(272.55+tc))
-    # alternatively don"t use enhancement factor for non-ideal gas correction
-    #ewat=6.1121.*exp(17.502.*tc./(240.97+tc));
-    #eice=6.1115.*exp(22.452.*tc./(272.55+tc));
-    eint=eice+(ewat-eice)*((tc-tice)/(t0-tice))**2
-
-    esat=eint
-    esat[np.where(tc<tice)]=eice[np.where(tc<tice)]
-    esat[np.where(tc>t0)]=ewat[np.where(tc>t0)]
-
-    # now convert vapor pressure to specific humidity and mixing ratio
-    rsat=epsilon*esat/(p-esat);
-    qsat=epsilon*esat/(p-esat*(1-epsilon));
-    return esat, qsat, rsat
-
-def h(T):
-    return cp*T + RH*Lv*humidsat(T, ps/100)[1]
-
-def T(h):
-    return T_dataset[np.searchsorted(h_dataset, h)]
 
 class EBM():
     """
@@ -164,7 +175,7 @@ class EBM():
         """
             h = self.solve()
 
-        Generage and solve A h = b.
+        Generate and solve A h = b.
         """
         # generate A and b
         A, b = self._generate_linear_system()
@@ -173,46 +184,3 @@ class EBM():
         h = A.solve(b) # J kg-1
 
         return h
-
-# T_dataset = np.arange(100, 400, 1e-3)
-# q_dataset = humidsat(T_dataset, ps/100)[1]
-# h_dataset = cp*T_dataset + RH*q_dataset*Lv
-
-# setup test problem
-n = 2**8
-x = np.linspace(-1, 1, n)
-Q = 1365/np.pi*np.cos(np.arcsin(x))
-Q -= np.trapz(Q, x)/2
-D = 2.6e-4*np.ones(n)
-hs = hn = 2.4e5
-
-# solve
-ebm = EBM(x, Q, D, hs, hn)
-h = ebm.solve()
-
-# plot
-plt.plot(x, h/1e3)
-plt.xlabel("$x$")
-plt.ylabel("$h$ (kJ kg$^{-1}$)")
-plt.tight_layout()
-plt.savefig("h.png")
-plt.close()
-
-# # real data
-# data = np.load("Ts.npz")
-# Ts = data["Ts"]
-# lat = data["lat"]
-# n = len(lat)
-
-# h = h(Ts)
-
-# x = np.sin(lat*np.pi/180)
-# # Q = 1365/np.pi*np.cos(np.arcsin(x))
-# # Q -= np.trapz(Q, x)/2
-# # D = 0.649*np.ones(n) # W m-2 K-1
-# # hs = Ts[0]
-# # hn = Ts[-1]
-# # ebm = EBM(x, Q, D)
-# # h = ebm.solve()
-# plt.plot(x, h/1e3)
-# plt.show()
