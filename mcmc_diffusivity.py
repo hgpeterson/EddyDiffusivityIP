@@ -12,15 +12,45 @@ import matplotlib.pyplot as plt
 from ebm import EBM
 import seaborn as sns
 
-def tridiagonal(size_of_a_matrix, diagonal, diagonalAbove, diagonalBelow):
+def ndiagonal(size_of_a_matrix, diagonal, diagonal1, diagonal2, diagonal3, diagonal4):
+    """ Creates a symmetric matrix with n diagonals
+    
+    Arguments: 
+        size_of_a_matrix (int): Creates a nxn matrix using the provided size as n
+        diagonal (arr): Array of the diagonal (maybe change this to int, but less flexible??)
+        diagonal1 (arr): Array for the first off diagonal, immediately adjacent to the main diagonal
+        diagonal2 (arr): Array for the second off diagonal, adjacent to diagonal1s
+        diagonal3 (arr): Array for the third off diagonal, adjacent to diagonal2s
+    """
+
    
     matrix = [[0 for j in range(size_of_a_matrix)]
               for i in range(size_of_a_matrix)]
       
     for k in range(size_of_a_matrix-1):
         matrix[k][k] = diagonal[k]
-        matrix[k][k+1] = diagonalAbove[k]
-        matrix[k+1][k] = diagonalBelow[k]
+        matrix[k][k+1] = diagonal1[k]
+        matrix[k+1][k] = diagonal1[k]
+        
+        try:
+            matrix[k][k+2] = diagonal2[k]
+            matrix[k+2][k] = diagonal2[k]
+        except IndexError:
+            pass
+        
+        try:
+            matrix[k][k+3] = diagonal3[k]
+            matrix[k+3][k] = diagonal3[k]
+        except IndexError:
+            pass
+        
+        try:
+            matrix[k][k+4] = diagonal4[k]
+            matrix[k+4][k] = diagonal4[k]
+        except IndexError:
+            continue
+
+
       
     matrix[size_of_a_matrix-1][size_of_a_matrix - 1] = diagonal[size_of_a_matrix-1]
      
@@ -59,24 +89,28 @@ def log_likelihoods(u, u_star, h, x, Q, hs, hn):
     """ Computes the ratio of posterior probabilities from u_star/u  
             using observations and forward model evaluation. This provides part
             of the acceptance probability
-            Output: Either ratio of log-likelihoods, 
-                or if we refactor this function to more generically produce 
-                neg log likelihoods and just take the appropriate ratio in
-                main or something
+        Output: 
+            move_llikelihood (float): negative log likelihood of the proposed move to u_star
+            previous_llikelihood  (float): negative log likelihood of the existing u  
     """
     
     # TO DO: Figure out how to define gamma so that we can standardize/weight
     # the observations when taking the weighted Euclidean norm to compute mismatch
     # between observations and model predictions 
 #    gamma = np.diag(np.ones(len(x),)*2e+09)  #Example for now, assumes noises are independent, may need tridiagonal here....
-    gamma = tridiagonal(len(x),np.ones(len(x),)*2e+9,np.ones(len(x),)*2e+9*0.7,np.ones(len(x),)*2e+9*0.7)
+    gamma = ndiagonal(len(x), 
+                      np.ones(len(x),)*1e+3,
+                      np.ones(len(x),)*1e+3*0.9,
+                      np.ones(len(x),)*1e+3*0.7,
+                      np.ones(len(x),)*1e+3*0.5,
+                      np.ones(len(x),)*1e+3*0.3)
 
         
     # Note: The following formulation does not include a penalty for u being 
     # far away from the prior... unless we get a well-enough defined prior where
     # this is reasonable 
-    move_llikelihood = 0.5 * np.sum((np.linalg.inv(gamma**(1/2)) * (h - model(x, Q, u_star, hs, hn)))**2)
-    previous_llikelihood =  0.5 * np.sum((np.linalg.inv(gamma**(1/2)) * (h - model(x, Q, u, hs, hn)))**2)
+    move_llikelihood = -0.5 * np.sum((np.linalg.inv(gamma**(1/2)) * (h - model(x, Q, u_star, hs, hn)))**2)
+    previous_llikelihood =  -0.5 * np.sum((np.linalg.inv(gamma**(1/2)) * (h - model(x, Q, u, hs, hn)))**2)
     
     return move_llikelihood, previous_llikelihood
 
@@ -107,18 +141,22 @@ def main():
     #(the choice of cov seems EXTREMELY important, or else MCMC won't converge...)
     # If we expect nondiagonal covariance, need to specify it
    
-    # Try a sample tridiagonal covariance matrix 
-    # There is a warning about cov not being pos semidefinite, but may be because of truncation errors in floating point precision??
-    cov = tridiagonal(len(x),np.ones(len(x),)*1e-7,np.ones(len(x),)*7e-8,np.ones(len(x),)*7e-8)
+    # Try a sample n-diagonal covariance matrix 
+    cov = ndiagonal(len(x),
+                    np.ones(len(x),)*1e-11,
+                    np.ones(len(x),)*1e-11*0.9,
+                    np.ones(len(x),)*1e-11*0.7,
+                    np.ones(len(x),)*1e-11*0.5,
+                    np.ones(len(x),)*1e-11*0.3)
     u = np.random.multivariate_normal(mean, cov)
     
-    for i in range(5000):
+    for i in range(50000):
         # TO DO: Figure out how to sample from a Markov kernel to get u_star
         # Would this just consider a gaussian with mean of the previous u and then some covariance? 
         u_star = np.random.multivariate_normal(u, cov)
         
         move, previous = log_likelihoods(u, u_star, h, x, Q, hs, hn)
-        a = np.min([move/previous, 1])
+        a = np.min([previous/move, 1])
         
         if a == 1:
             u = u_star
@@ -134,7 +172,41 @@ def main():
     plt.plot(x, u_arr[:,-1]) #Attempt to plot final meridional diffusivity
     
     sns.heatmap(u_arr)
-    plt.savefig("D_2.png")
+    plt.savefig("D_3p5.png")
     
+    for i in range(1,20000,100):
+        plt.scatter(i,np.sum((h - model(x, Q, u_arr[:,i], hs, hn))**2))
+        
+    plt.plot(model(x, Q, u_arr[:,16000], hs, hn))
+    
+    # Try making a plot to show uncertainty in D at different latitudes
+    lat_med = []
+    lat_std = []
+    lat_percentile = []
+    for i in range(len(x)):
+        lat_med = np.append(lat_med, np.median(u_arr[i,-10000:]))
+        lat_std = np.append(lat_std, np.std(u_arr[i,-10000:]))
+        try:
+            lat_percentile.append(np.percentile(u_arr[i,-10000:], [5,25,50,75,95]))
+        except:
+            lat_percentile.append(np.percentile((np.nan), [5,25,50,75,95]))
+
+    lat_percentile = np.array(lat_percentile)
+
+    fig, ax = plt.subplots()
+    fig.set_size_inches(8, 6, forward=True)
+    fig.set_dpi(100)
+    ax.fill_between(x, lat_percentile[:,0], lat_percentile[:,4], color='red', alpha=0.15, lw=3)
+    ax.fill_between(x, lat_percentile[:,1], lat_percentile[:,3], color='red', alpha=0.35, lw=3)
+    ax.plot(x, lat_percentile[:,2], color='k', lw=3)  # Plot the median  data
+    #plt.grid(axis='x', color='#f2f2f2')
+    plt.grid(axis='y', color='#dedede')
+    plt.suptitle('')
+    plt.title('Uncertainty in D')
+    plt.xlabel('$sin(\phi)$', fontsize=12)
+    plt.ylabel('Diffusivity D [kg $m^{-2} s^{-1}$]', fontsize=12, labelpad=0)
+    plt.savefig('D_percentiles_3.png', format='png')
+    plt.show()
+
 if __name__ == '__main__':
     main()
