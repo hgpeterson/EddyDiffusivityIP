@@ -99,11 +99,11 @@ def log_likelihoods(u, u_star, h, x, Q, hs, hn):
     # between observations and model predictions 
 #    gamma = np.diag(np.ones(len(x),)*2e+09)  #Example for now, assumes noises are independent, may need tridiagonal here....
     gamma = ndiagonal(len(x), 
-                      np.ones(len(x),)*1e+3,
-                      np.ones(len(x),)*1e+3*0.9,
-                      np.ones(len(x),)*1e+3*0.7,
-                      np.ones(len(x),)*1e+3*0.5,
-                      np.ones(len(x),)*1e+3*0.3)
+                      np.ones(len(x),)*1e+0,
+                      np.ones(len(x),)*1e+0*0.9,
+                      np.ones(len(x),)*1e+0*0.7,
+                      np.ones(len(x),)*1e+0*0.5,
+                      np.ones(len(x),)*1e+0*0.3)
 
         
     # Note: The following formulation does not include a penalty for u being 
@@ -150,7 +150,7 @@ def main():
                     np.ones(len(x),)*1e-11*0.3)
     u = np.random.multivariate_normal(mean, cov)
     
-    for i in range(10000):
+    for i in range(20000):
         # TO DO: Figure out how to sample from a Markov kernel to get u_star
         # Would this just consider a gaussian with mean of the previous u and then some covariance? 
         u_star = np.random.multivariate_normal(u, cov)
@@ -172,23 +172,23 @@ def main():
     plt.plot(x, u_arr[:,-1]) #Attempt to plot final meridional diffusivity
     
     sns.heatmap(u_arr)
-    plt.savefig("D_3p5.png")
+    plt.savefig("D_3p7.png")
     
-    for i in range(1,1000,2):
+    for i in range(1,25000,100):
         plt.scatter(i,np.sum((h - model(x, Q, u_arr[:,i], hs, hn))**2))
         
-    plt.plot(h-model(x, Q, u_arr[:,1000], hs, hn))
-    plt.plot(model(x, Q, u_arr[:,1000], hs, hn))
+    plt.plot(h-model(x, Q, u_arr[:,9900], hs, hn))
+    plt.plot(model(x, Q, u_arr[:,18000], hs, hn))
 
     # Try making a plot to show uncertainty in D at different latitudes
     lat_med = []
     lat_std = []
     lat_percentile = []
     for i in range(len(x)):
-        lat_med = np.append(lat_med, np.median(u_arr[i,-10000:]))
-        lat_std = np.append(lat_std, np.std(u_arr[i,-10000:]))
+        lat_med = np.append(lat_med, np.median(u_arr[i,-2500:]))
+        lat_std = np.append(lat_std, np.std(u_arr[i,-2500:]))
         try:
-            lat_percentile.append(np.percentile(u_arr[i,-10000:], [5,25,50,75,95]))
+            lat_percentile.append(np.percentile(u_arr[i,-2500:], [5,25,50,75,95]))
         except:
             lat_percentile.append(np.percentile((np.nan), [5,25,50,75,95]))
 
@@ -206,7 +206,7 @@ def main():
     plt.title('Uncertainty in D')
     plt.xlabel('$sin(\phi)$', fontsize=12)
     plt.ylabel('Diffusivity D [kg $m^{-2} s^{-1}$]', fontsize=12, labelpad=0)
-    plt.savefig('D_percentiles_3.png', format='png')
+    plt.savefig('D_percentiles_6.png', format='png')
     plt.show()
 
 if __name__ == '__main__':
