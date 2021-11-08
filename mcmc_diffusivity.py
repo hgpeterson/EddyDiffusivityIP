@@ -83,7 +83,7 @@ def model(x, Q, D, hs, hn):
     ebm = EBM(x, Q, D, hs, hn)
     h_tilde = ebm.solve()
     
-    return h_tilde
+    return np.squeeze(h_tilde)
 
 def log_likelihoods(u, u_star, h, x, Q, hs, hn):
     """ Computes the ratio of posterior probabilities from u_star/u  
@@ -109,8 +109,8 @@ def log_likelihoods(u, u_star, h, x, Q, hs, hn):
     # Note: The following formulation does not include a penalty for u being 
     # far away from the prior... unless we get a well-enough defined prior where
     # this is reasonable 
-    move_llikelihood = -0.5 * np.sum((np.linalg.inv(gamma**(1/2)) * (h - model(x, Q, u_star, hs, hn)))**2)
-    previous_llikelihood =  -0.5 * np.sum((np.linalg.inv(gamma**(1/2)) * (h - model(x, Q, u, hs, hn)))**2)
+    move_llikelihood = -0.5 * np.sum(np.linalg.inv(gamma**(1/2)) * (h - model(x, Q, u_star, hs, hn))**2)
+    previous_llikelihood =  -0.5 * np.sum(np.linalg.inv(gamma**(1/2)) * (h - model(x, Q, u, hs, hn))**2)
     
     return move_llikelihood, previous_llikelihood
 
@@ -150,7 +150,7 @@ def main():
                     np.ones(len(x),)*1e-11*0.3)
     u = np.random.multivariate_normal(mean, cov)
     
-    for i in range(50000):
+    for i in range(10000):
         # TO DO: Figure out how to sample from a Markov kernel to get u_star
         # Would this just consider a gaussian with mean of the previous u and then some covariance? 
         u_star = np.random.multivariate_normal(u, cov)
@@ -174,11 +174,12 @@ def main():
     sns.heatmap(u_arr)
     plt.savefig("D_3p5.png")
     
-    for i in range(1,20000,100):
+    for i in range(1,1000,2):
         plt.scatter(i,np.sum((h - model(x, Q, u_arr[:,i], hs, hn))**2))
         
-    plt.plot(model(x, Q, u_arr[:,16000], hs, hn))
-    
+    plt.plot(h-model(x, Q, u_arr[:,1000], hs, hn))
+    plt.plot(model(x, Q, u_arr[:,1000], hs, hn))
+
     # Try making a plot to show uncertainty in D at different latitudes
     lat_med = []
     lat_std = []
