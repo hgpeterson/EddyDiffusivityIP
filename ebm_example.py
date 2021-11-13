@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from ebm import EBM
 
-plt.style.use("plots.mplstyle")
+# plt.style.use("plots.mplstyle")
 
 # # test problem
 # n = 2**8
@@ -13,16 +13,19 @@ plt.style.use("plots.mplstyle")
 # hs = hn = 2.4e5
 
 # real data
-data = np.load("data/h_Q_CNRM-CM5.npz")
+data = np.load("data/h_Q_GFDL-CM3.npz")
 h = data["h"]
 x = data["x"]
 Q = data["Q"]
 hs = h[0]
 hn = h[-1]
-D = 2.6e-4*np.ones(len(x))
+# spectral = False
+# D = 2.6e-4*np.ones(len(x))
+spectral = True
+D = [2.6e-4, 0, 0, 0, -1e-4, 0]
 
 # solve
-ebm = EBM(x, Q, D, hs, hn)
+ebm = EBM(x, Q, D, hs, hn, spectral=spectral)
 h_tilde = ebm.solve()
 
 # plot

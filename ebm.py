@@ -1,70 +1,8 @@
 import numpy as np
 from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import splu
-
-# Constants 
-ps = 98000     # surface pressure (kg m-1 s-2)
-cp = 1005      # specific heat capacity at constant pressure (J kg-1 K-1)
-RH = 0.8       # relative humidity (0-1)
-Lv = 2257000   # latent heat of vaporization (J kg-1)
-
-def humidsat(t, p):
-    """
-        esat, qsat, rsat = humidsat(t, p)
-
-    Computes saturation vapor pressure (esat), saturation specific humidity (qsat),
-    and saturation mixing ratio (rsat) given inputs temperature (t) in K and
-    pressure (p) in hPa.
-    
-    These are all computed using the modified Tetens-like formulae given by
-    Buck (1981, J. Appl. Meteorol.) for vapor pressure over liquid water at 
-    temperatures over 0 C, and for vapor pressure over ice at temperatures 
-    below -23 C, and a quadratic polynomial interpolation for intermediate temperatures.
-    """
-    tc=t-273.16;
-    tice=-23;
-    t0=0;
-    Rd=287.04;
-    Rv=461.5;
-    epsilon=Rd/Rv;
-
-    # first compute saturation vapor pressure over water
-    ewat=(1.0007+(3.46e-6*p))*6.1121*np.exp(17.502*tc/(240.97+tc))
-    eice=(1.0003+(4.18e-6*p))*6.1115*np.exp(22.452*tc/(272.55+tc))
-    # alternatively don"t use enhancement factor for non-ideal gas correction
-    #ewat=6.1121.*exp(17.502.*tc./(240.97+tc));
-    #eice=6.1115.*exp(22.452.*tc./(272.55+tc));
-    eint=eice+(ewat-eice)*((tc-tice)/(t0-tice))**2
-
-    esat=eint
-    esat[np.where(tc<tice)]=eice[np.where(tc<tice)]
-    esat[np.where(tc>t0)]=ewat[np.where(tc>t0)]
-
-    # now convert vapor pressure to specific humidity and mixing ratio
-    rsat=epsilon*esat/(p-esat);
-    qsat=epsilon*esat/(p-esat*(1-epsilon));
-    return esat, qsat, rsat
-
-# datasets of T, q, and h to be able to convert from one to the other
-T_dataset = np.arange(100, 400, 1e-3)
-q_dataset = humidsat(T_dataset, ps/100)[1]
-h_dataset = cp*T_dataset + RH*q_dataset*Lv
-
-def h(T):
-    """
-        h = h(T)
-
-    Compute h = cp*T + RH*Lv*q(T).
-    """
-    return cp*T + RH*Lv*humidsat(T, ps/100)[1]
-
-def T(h):
-    """
-        T = T(h)
-
-    Compute T from h = cp*T + RH*Lv*q(T).
-    """
-    return T_dataset[np.searchsorted(h_dataset, h)]
+# import matplotlib.pyplot as plt
+# import os
 
 def add_node(rcd, r, c, d):
     """
@@ -91,13 +29,23 @@ def basis_vector(I, i):
     b = I[j]/(I[j] - I[i])
     return m, b 
 
-# def gquad2(f, a, b):
-#     x = np.array([-1/np.sqrt(3), 1/np.sqrt(3)])
-#     x = (b - a)/2 * x + (a + b)/2
-#     return (b - a)/2 * (f(x[0]) + f(x[1]))
+def gquad2(f, a, b):
+    """
+        int = gquad(f, a, b)
 
-# def lerp(p0, p1, x):
-#     return p0[1]*(x - p1[0])/(p0[0] - p1[0]) + p1[1]*(x - p0[0])/(p1[0] - p0[0])
+    Compute integral of f(x) on interval [a, b] using Gaussian quadrature.
+    """
+    x = np.array([-1/np.sqrt(3), 1/np.sqrt(3)])
+    x = (b - a)/2 * x + (a + b)/2
+    return (b - a)/2 * (f(x[0]) + f(x[1]))
+
+def lerp(p0, p1):
+    """
+        f(x) = lerp(p0, p1)
+
+    Linearly interpolate between two points p0 = [x0, y0] and p1 = [x1, y1].
+    """
+    return lambda x: p0[1]*(x - p1[0])/(p0[0] - p1[0]) + p1[1]*(x - p0[0])/(p1[0] - p0[0])
 
 class EBM():
     """
@@ -110,16 +58,27 @@ class EBM():
     is designed to take x, Q, and D as inputs and output h.
     """
 
-    def __init__(self, x, Q, D, hs, hn):
-        # givens
+    def __init__(self, x, Q, D, hs, hn, spectral=False):
+        # load data
         self.x = x   # grid (sine latitude)
         self.Q = Q   # net energy input (W m-2)
-        self.D = D   # eddy diffusivity (kg m-2 s-1)
         self.hs = hs # south pole moist static energy (J kg-1)
         self.hn = hn # north pole moist static energy (J kg-1)
-
-        # computables
         self.n = len(x) # number of grid points
+
+        # compute eddy diffusivity (kg m-2 s-1)
+        if spectral:
+            # using Legendre polynomials
+            p0 = np.ones(self.n)
+            p1 = x
+            p2 = 1/2*(3*x**2 - 1)
+            p3 = 1/2*(5*x**3 - 3*x)
+            p4 = 1/8*(35*x**4 - 30*x**2 + 3)
+            p5 = 1/8*(63*x**5 - 70*x**3 + 15*x)
+            p = np.vstack((p0, p1, p2, p3, p4, p5))
+            self.D = np.dot(D, p)
+        else:
+            self.D = D   
 
     def _generate_linear_system(self):
         """
@@ -138,31 +97,33 @@ class EBM():
             x0 = self.x[i]
             x1 = self.x[i+1]
 
-            # integral of (1 - x**2) on I
-            integral = x1 - x1**3/3 - (x0 - x0**3/3)
-
             # basis vectors on I
             m0, b0 = basis_vector([x0, x1], 0)
             m1, b1 = basis_vector([x0, x1], 1)
 
-            # average D and Q on I
-            D = (self.D[i] + self.D[i+1])/2
-            Q = (self.Q[i+1] + self.Q[i])/2
+            # approximate D and Q as linear on I
+            D = lerp([x0, self.D[i]], [x1, self.D[i+1]])
+            Q = lerp([x0, self.Q[i]], [x1, self.Q[i+1]])
+
+            # integrate (1 - x^2)*D and Q*(mx + b) using Gaussian quadrature
+            intD  = gquad2(lambda x: (1 - x**2)*D(x),  x0, x1)
+            intQ0 = gquad2(lambda x: (b0 + m0*x)*Q(x), x0, x1)
+            intQ1 = gquad2(lambda x: (b1 + m1*x)*Q(x), x0, x1)
 
             # stamp integral componenta for interior nodes
             if i != 0:
-                rcd = add_node(rcd, i, i,     m0*m0*D*integral)
-                rcd = add_node(rcd, i, i+1,   m0*m1*D*integral)
-                b[i]   += Q*(b0*x1 + m0*x1**2/2 - (b0*x0 + m0*x0**2/2))
+                rcd   = add_node(rcd, i, i,     m0*m0*intD)
+                rcd   = add_node(rcd, i, i+1,   m0*m1*intD)
+                b[i] += intQ0
             if i != self.n-2:
-                rcd = add_node(rcd, i+1, i,   m1*m0*D*integral)
-                rcd = add_node(rcd, i+1, i+1, m1*m1*D*integral)
-                b[i+1] += Q*(b1*x1 + m1*x1**2/2 - (b1*x0 + m1*x0**2/2))
+                rcd     = add_node(rcd, i+1, i,   m1*m0*intD)
+                rcd     = add_node(rcd, i+1, i+1, m1*m1*intD)
+                b[i+1] += intQ1
 
         # set h on boundaries
-        rcd = add_node(rcd, 0, 0, 1)
-        rcd = add_node(rcd, self.n-1, self.n-1, 1)
-        b[0] = self.hs        # south pole
+        rcd         = add_node(rcd, 0, 0, 1)
+        rcd         = add_node(rcd, self.n-1, self.n-1, 1)
+        b[0]        = self.hs # south pole
         b[self.n-1] = self.hn # north pole
 
         # assemble sparse matrix
