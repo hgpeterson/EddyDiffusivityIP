@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import splu
+from scipy.special import legendre
 # import matplotlib.pyplot as plt
 # import os
 
@@ -69,15 +70,12 @@ class EBM():
         # compute eddy diffusivity (kg m-2 s-1)
         if spectral:
             # using Legendre polynomials
-            p0 = np.ones(self.n)
-            p1 = x
-            p2 = 1/2*(3*x**2 - 1)
-            p3 = 1/2*(5*x**3 - 3*x)
-            p4 = 1/8*(35*x**4 - 30*x**2 + 3)
-            p5 = 1/8*(63*x**5 - 70*x**3 + 15*x)
-            p = np.vstack((p0, p1, p2, p3, p4, p5))
-            self.D = np.dot(D, p)
+            legendre_polys = np.zeros((self.n, len(D)))
+            for i in range(len(D)):
+                legendre_polys[:, i] = legendre(i)(x)
+            self.D = np.dot(legendre_polys, D)
         else:
+            # given directly
             self.D = D   
 
     def _generate_linear_system(self):

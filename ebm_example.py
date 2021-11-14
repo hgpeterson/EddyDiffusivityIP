@@ -22,11 +22,23 @@ hn = h[-1]
 # spectral = False
 # D = 2.6e-4*np.ones(len(x))
 spectral = True
-D = [2.6e-4, 0, 0, 0, -1e-4, 0]
+n_polys = 20
+D = np.zeros(n_polys)
+D[0] = 2.6e-4 
+D[4] = -1e-4 
 
 # solve
 ebm = EBM(x, Q, D, hs, hn, spectral=spectral)
 h_tilde = ebm.solve()
+
+# plot D
+plt.plot(x, 1e4*ebm.D)
+plt.xlabel("$x$")
+plt.ylabel("$D$ (kg m$^{-2}$ s$^{-1}$)")
+plt.tight_layout()
+plt.savefig("D.png")
+print("D.png")
+plt.close()
 
 # plot
 plt.plot(x, h_tilde/1e3, label="model")
