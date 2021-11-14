@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from ebm import EBM
 
-# plt.style.use("plots.mplstyle")
+plt.style.use("plots.mplstyle")
 
 # # test problem
 # n = 2**8
@@ -34,7 +34,7 @@ h_tilde = ebm.solve()
 # plot D
 plt.plot(x, 1e4*ebm.D)
 plt.xlabel("$x$")
-plt.ylabel("$D$ (kg m$^{-2}$ s$^{-1}$)")
+plt.ylabel(r"$D$ ($\times 10^{-4}$ kg m$^{-2}$ s$^{-1}$)")
 plt.tight_layout()
 plt.savefig("D.png")
 print("D.png")
