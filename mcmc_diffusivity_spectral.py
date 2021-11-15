@@ -165,15 +165,14 @@ def main():
 
         u_arr = np.c_[u_arr, u] #Since u is a 1D vector, if we keep this appending method, make sure to append using the correct axis
     
-
+    # This type of plot is pretty useless now
     sns.heatmap(u_arr)
     
+    # Plot sum of squared errors in h over time
     for i in range(1,2000,1):
-        plt.scatter(i,np.sum((h - model(x, Q, u_arr[:,i], hs, hn)[0])**2))
+        plt.scatter(i,np.sum((h - model(x, Q, u_arr[:,i], hs, hn)[0])**2),c='k')
         
-    plt.plot(h-model(x, Q, u_arr[:,2000], hs, hn))
-    plt.plot(model(x, Q, u_arr[:,2000], hs, hn))
-
+    # Plot difference between EBM model predicted using our D and the true from the model
     plt.plot(x, model(x, Q, u_arr[:,2000], hs, hn)[0]/1e3, label="model")
     plt.plot(x, h/1e3, label="truth")
     plt.xlabel("$x$")
@@ -183,7 +182,7 @@ def main():
     plt.savefig("h_mcmc_2k.png")
     plt.close()
 
-    # Try plotting produced Ds (should be interpolated)
+    # Plotting produced Ds
     plt.plot(x, model(x, Q, u_arr[:,2000], hs, hn)[1])
     plt.xlabel('$sin(\phi)$', fontsize=12)
     plt.ylabel('Diffusivity D [kg $m^{-2} s^{-1}$]', fontsize=12, labelpad=0)
@@ -198,9 +197,9 @@ def main():
         
     sns.heatmap(np.abs(hdiff_arr))
 
+    # plot of D over time
     sns.heatmap(D_arr)
     plt.savefig("D_4p1.png")
-
     
     lat_med = []
     lat_std = []
@@ -227,7 +226,7 @@ def main():
     plt.title('Uncertainty in D')
     plt.xlabel('$sin(\phi)$', fontsize=12)
     plt.ylabel('Diffusivity D [kg $m^{-2} s^{-1}$]', fontsize=12, labelpad=0)
-#    plt.savefig('D_percentiles_6.png', format='png')
+    plt.savefig('D_percentiles_legendre_1p1.png', format='png')
     plt.show()
 
 if __name__ == '__main__':
