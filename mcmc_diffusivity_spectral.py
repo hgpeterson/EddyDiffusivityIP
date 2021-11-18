@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-"""
-Created on Sun Oct 31 17:13:36 2021
-
-@author: rpatel
-"""
 import numpy as np
 import random
 import matplotlib.pyplot as plt
@@ -16,48 +8,6 @@ random.seed(42)
 
 plt.style.use("plots.mplstyle")
 
-def ndiagonal(size_of_a_matrix, diagonal, diagonal1, diagonal2, diagonal3, diagonal4):
-    """ Creates a symmetric matrix with n diagonals
-    
-    Arguments: 
-        size_of_a_matrix (int): Creates a nxn matrix using the provided size as n
-        diagonal (arr): Array of the diagonal (maybe change this to int, but less flexible??)
-        diagonal1 (arr): Array for the first off diagonal, immediately adjacent to the main diagonal
-        diagonal2 (arr): Array for the second off diagonal, adjacent to diagonal1s
-        diagonal3 (arr): Array for the third off diagonal, adjacent to diagonal2s
-    """
-
-   
-    matrix = [[0 for j in range(size_of_a_matrix)]
-              for i in range(size_of_a_matrix)]
-      
-    for k in range(size_of_a_matrix-1):
-        matrix[k][k] = diagonal[k]
-        matrix[k][k+1] = diagonal1[k]
-        matrix[k+1][k] = diagonal1[k]
-        
-        try:
-            matrix[k][k+2] = diagonal2[k]
-            matrix[k+2][k] = diagonal2[k]
-        except IndexError:
-            pass
-        
-        try:
-            matrix[k][k+3] = diagonal3[k]
-            matrix[k+3][k] = diagonal3[k]
-        except IndexError:
-            pass
-        
-        try:
-            matrix[k][k+4] = diagonal4[k]
-            matrix[k+4][k] = diagonal4[k]
-        except IndexError:
-            continue
-
-    matrix[size_of_a_matrix-1][size_of_a_matrix - 1] = diagonal[size_of_a_matrix-1]
-     
-    return np.asarray(matrix) 
-
 def data():
     """ Loads observed (or climate model) Moist Static Energy h. 
     Should be 1d arr
@@ -66,10 +16,11 @@ def data():
         model (str): CMIP5 model that corresponds to the name of the .npz file
     """
     # TO DO: Add argument for different models
-    data = np.load("data/h_Q_CNRM-CM5.npz")
-    h = data["h"]
-    x = data["x"]
-    Q = data["Q"]
+    # data = np.load("data/h_Q_CNRM-CM5.npz")
+    d = np.load("data/h_Q_synthetic.npz")
+    h = d["h"]
+    x = d["x"]
+    Q = d["Q"]
     hs = h[0]
     hn = h[-1]
 
@@ -100,8 +51,8 @@ def log_likelihoods(gamma_inv_12, u, u_star, h, x, Q, hs, hn):
     # Note: The following formulation does not include a penalty for u being 
     # far away from the prior... unless we get a well-enough defined prior where
     # this is reasonable 
-    move_llikelihood = -0.5 * np.sum(np.dot(gamma_inv_12, (h - model(x, Q, u_star, hs, hn)[0])))**2
-    previous_llikelihood =  -0.5 * np.sum(np.dot(gamma_inv_12, (h - model(x, Q, u, hs, hn)[0])))**2
+    move_llikelihood     = -0.5 * np.sum(np.dot(gamma_inv_12, (h - model(x, Q, u_star, hs, hn)[0])))**2
+    previous_llikelihood = -0.5 * np.sum(np.dot(gamma_inv_12, (h - model(x, Q, u, hs, hn)[0])))**2
     
     return move_llikelihood, previous_llikelihood
 
@@ -120,27 +71,21 @@ def main():
     h, x, Q, hs, hn = data()
 
     # pre-compute Gamma
-    gamma = ndiagonal(len(x), 
-                      np.ones(len(x),),
-                      np.ones(len(x),)*0.7,
-                      np.ones(len(x),)*0.7,
-                      np.ones(len(x),)*0.3,
-                      np.ones(len(x),)*0.3)
-    gamma = np.dot(gamma.T, gamma)
+    gamma = np.identity(len(x))
     gamma_inv_12 = fractional_matrix_power(gamma, -1/2)
 
     # is gamma positive definite?
     # print(np.all(np.linalg.eigvals(gamma) > 0))
 
     # Sample from the prior distribution
-    n_polys = 10
+    n_polys = 5
     mean = np.zeros(n_polys)
     mean[0] = 2.6e-4
     mean[4] = -1e-4
     u_arr = mean
 
     # Try a sample n-diagonal covariance matrix 
-    cov = 1e-11*np.identity(len(mean))
+    cov = 1e-10*np.identity(len(mean))
     u = np.random.multivariate_normal(mean, cov)
     
     N = 1000
@@ -159,6 +104,8 @@ def main():
         
         move, previous = log_likelihoods(gamma_inv_12, u, u_star, h, x, Q, hs, hn)
         a = np.min([previous/move, 1])
+
+        print(f"{previous:1.1e}")
         
         if a == 1:
             u = u_star
@@ -168,66 +115,54 @@ def main():
             u = u
 
         u_arr = np.c_[u_arr, u] #Since u is a 1D vector, if we keep this appending method, make sure to append using the correct axis
+
+    # print final solution
+    print(u)
     
     # Plot sum of squared errors in h over time
     fig, ax = plt.subplots()
     errors = np.zeros(N)
     for i in range(1, N):
         errors[i] = np.sum(np.dot(gamma_inv_12, (h - h_tildes[i, :])))**2
-    ax.plot(errors)
+    ax.semilogy(np.abs(errors))
     ax.set_xlabel("iteration")
     ax.set_ylabel(r"model error $|| y - G(u) ||_\Gamma^2$")
-    plt.tight_layout()
-    plt.savefig("error.pdf")
-    print("error.pdf")
+    # plt.savefig("error.pdf")
+    # print("error.pdf")
+    plt.savefig("error.png")
+    print("error.png")
     plt.close()
         
     # Plot difference between EBM model predicted using our D and the true from the model
     fig, ax = plt.subplots()
+    ax.plot(x, h/1e3, label="reference model")
     ax.plot(x, h_tildes[-1, :]/1e3, label="EBM")
-    ax.plot(x, h/1e3, label="climate model")
     ax.set_xlabel(r"latitude $\phi$ (degrees)")
     ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
     ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
     ax.set_ylabel("moist static energy $h$ (kJ kg$^{-1}$)")
     plt.legend()
-    plt.tight_layout()
-    plt.savefig("h.pdf")
-    print("h.pdf")
+    # plt.savefig("h.pdf")
+    # print("h.pdf")
+    plt.savefig("h.png")
+    print("h.png")
     plt.close()
 
-    # Plots to show uncertainty in D at different latitudes
-    D_arr = np.zeros(len(x),)
-    hdiff_arr = np.zeros(len(x),)
-
-    for i in range(1, N):
-        D_arr = np.c_[D_arr, Ds[i, :]]
-        hdiff_arr = np.c_[hdiff_arr, h - h_tildes[i, :]]
-    
-    lat_med = []
-    lat_std = []
-    lat_percentile = []
-    for i in range(len(x)):
-        lat_med = np.append(lat_med, np.median(D_arr[i,-N//4:]))
-        lat_std = np.append(lat_std, np.std(D_arr[i,-N//4:]))
-        try:
-            lat_percentile.append(np.percentile(D_arr[i,-N//4:], [5,25,50,75,95]))
-        except:
-            lat_percentile.append(np.percentile((np.nan), [5,25,50,75,95]))
-
-    lat_percentile = np.array(lat_percentile)
-
+    # plot final D
     fig, ax = plt.subplots()
-    ax.fill_between(x, 1e4*lat_percentile[:,0], 1e4*lat_percentile[:,4], color='red', alpha=0.15)
-    ax.fill_between(x, 1e4*lat_percentile[:,1], 1e4*lat_percentile[:,3], color='red', alpha=0.35)
-    ax.plot(x, 1e4*lat_percentile[:,2], color='k')  # Plot the median  data
+    d = np.load("data/h_Q_synthetic.npz")
+    D_true = d["D"]
+    ax.plot(x, 1e4*D_true, label="reference model")
+    ax.plot(x, 1e4*Ds[-1, :], label="inverse result")
+    ax.legend()
     ax.set_xlabel(r"latitude $\phi$ (degrees)")
     ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
     ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
     plt.ylabel(r"diffusivity $D$ ($\times 10^{-4}$ kg m$^{-2}$ s$^{-1}$)")
-    plt.tight_layout()
-    plt.savefig('D.pdf')
-    print("D.pdf")
+    # plt.savefig('D.pdf')
+    # print("D.pdf")
+    plt.savefig('D.png')
+    print("D.png")
     plt.close()
 
 if __name__ == '__main__':

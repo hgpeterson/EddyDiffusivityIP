@@ -4,32 +4,25 @@ from ebm import EBM
 
 plt.style.use("plots.mplstyle")
 
-# # test problem
-# n = 2**8
-# x = np.linspace(-1, 1, n)
-# Q = 1365/np.pi*np.cos(np.arcsin(x))
-# Q -= np.trapz(Q, x)/2
-# D = 2.6e-4*np.ones(n)
-# hs = hn = 2.4e5
-
-# real data
-data = np.load("data/h_Q_GFDL-CM3.npz")
-h = data["h"]
-x = data["x"]
-Q = data["Q"]
-hs = h[0]
-hn = h[-1]
-# spectral = False
-# D = 2.6e-4*np.ones(len(x))
+# generate synthetic problem data
+n = 2**8
+x = np.linspace(-1, 1, n)
+Q = 1365/4*(1 - 0.3)*np.cos(np.arcsin(x))
+Q -= np.trapz(Q, x)/2
+hs = hn = 2.5e5
 spectral = True
 n_polys = 20
 D = np.zeros(n_polys)
 D[0] = 2.6e-4 
-# D[4] = -1e-4 
+D[4] = -1e-4 
 
 # solve
 ebm = EBM(x, Q, D, hs, hn, spectral=spectral)
-h_tilde = ebm.solve()
+h = ebm.solve()
+
+# save
+np.savez("data/h_Q_synthetic.npz", h=h, Q=Q, x=x, D=ebm.D)
+print("data/h_Q_synthetic.npz")
 
 # plot Q
 fig, ax = plt.subplots()
@@ -55,13 +48,11 @@ plt.close()
 
 # plot
 fig, ax = plt.subplots()
-ax.plot(x, h_tilde/1e3, label=r"$G(u)$ from EBM ")
-ax.plot(x, h/1e3, label="$y$ from climate model")
+ax.plot(x, h/1e3)
 ax.set_xlabel(r"latitude $\phi$ (degrees)")
 ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
 ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
 ax.set_ylabel("moist static energy $h$ (kJ kg$^{-1}$)")
-ax.legend()
 plt.savefig("h.png")
 print("h.png")
 plt.close()
