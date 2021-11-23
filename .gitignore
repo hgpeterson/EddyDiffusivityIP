@@ -134,3 +134,6 @@ dmypy.json
 
 # vim
 *.swp
+
+# output
+out.npz
