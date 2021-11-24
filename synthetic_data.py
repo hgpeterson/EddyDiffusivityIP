@@ -5,13 +5,13 @@ from ebm import EBM
 plt.style.use("plots.mplstyle")
 
 # generate synthetic problem data
-n = 2**8
+n = 2**7
 x = np.linspace(-1, 1, n)
 Q = 1365/4*(1 - 0.3)*np.cos(np.arcsin(x))
 Q -= np.trapz(Q, x)/2
 hs = hn = 2.5e5
 spectral = True
-n_polys = 20
+n_polys = 5
 D = np.zeros(n_polys)
 D[0] = 2.6e-4 
 D[4] = -1e-4 
