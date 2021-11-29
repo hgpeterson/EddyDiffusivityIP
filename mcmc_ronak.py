@@ -1,91 +1,58 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-"""
-Created on Sun Oct 31 17:13:36 2021
-
-@author: rpatel
-"""
+from sys import modules
 import numpy as np
-import random
 import matplotlib.pyplot as plt
 from ebm import EBM
-import seaborn as sns
+from scipy.linalg import fractional_matrix_power
+from scipy.special import legendre
+import os
 
-def ndiagonal(size_of_a_matrix, diagonal, diagonal1, diagonal2, diagonal3, diagonal4):
-    """ Creates a symmetric matrix with n diagonals
-    
-    Arguments: 
-        size_of_a_matrix (int): Creates a nxn matrix using the provided size as n
-        diagonal (arr): Array of the diagonal (maybe change this to int, but less flexible??)
-        diagonal1 (arr): Array for the first off diagonal, immediately adjacent to the main diagonal
-        diagonal2 (arr): Array for the second off diagonal, adjacent to diagonal1s
-        diagonal3 (arr): Array for the third off diagonal, adjacent to diagonal2s
-    """
+np.random.seed(64)
 
-   
-    matrix = [[0 for j in range(size_of_a_matrix)]
-              for i in range(size_of_a_matrix)]
-      
-    for k in range(size_of_a_matrix-1):
-        matrix[k][k] = diagonal[k]
-        matrix[k][k+1] = diagonal1[k]
-        matrix[k+1][k] = diagonal1[k]
-        
-        try:
-            matrix[k][k+2] = diagonal2[k]
-            matrix[k+2][k] = diagonal2[k]
-        except IndexError:
-            pass
-        
-        try:
-            matrix[k][k+3] = diagonal3[k]
-            matrix[k+3][k] = diagonal3[k]
-        except IndexError:
-            pass
-        
-        try:
-            matrix[k][k+4] = diagonal4[k]
-            matrix[k+4][k] = diagonal4[k]
-        except IndexError:
-            continue
+plt.style.use("plots.mplstyle")
 
-
-      
-    matrix[size_of_a_matrix-1][size_of_a_matrix - 1] = diagonal[size_of_a_matrix-1]
-     
-    return np.asarray(matrix) 
-
-def data():
+def data(mdl):
     """ Loads observed (or climate model) Moist Static Energy h. 
     Should be 1d arr
     
     Arguments: 
-        model (str): CMIP5 model that corresponds to the name of the .npz file
+        mdl (str): CMIP5 model that corresponds to the name of the .npz file
     """
     # TO DO: Add argument for different models
-    data = np.load("data/h_Q_CNRM-CM5.npz")
-    h = data["h"]
-    x = data["x"]
-    Q = data["Q"]
+    d = np.load("data/" + str(mdl) + ".npz")
+    # d = np.load("data/h_Q_synthetic.npz")
+    h = d["h"]
+    x = d["x"]
+    Q = d["Q"]
     hs = h[0]
     hn = h[-1]
 
     return h, x, Q, hs, hn
 
-def model(x, Q, D, hs, hn):
+def model(x, Q, D, hs, hn, spectral):
     """ Define the forward model, or just import it as a separate python 
             function with documented inputs/outputs
     Arguments:
         D (arr): Diffusivity
     """
     # Start with simple model
-    ebm = EBM(x, Q, D, hs, hn)
+    ebm = EBM(x, Q, D, hs, hn, spectral)
     h_tilde = ebm.solve()
     
-    return np.squeeze(h_tilde)
+    return h_tilde, ebm.D
 
-def log_likelihoods(u, u_star, h, x, Q, hs, hn):
+def matrix_norm(A_inv_12, u):
+    """ Computes the matrix norm <u, u>_A in the L2 norm.
+
+    Args:
+        A_inv_12 (n x n array) 
+        u (n x 1 array)
+
+    Returns:
+        (float)
+    """
+    return np.linalg.norm(np.dot(A_inv_12, u))
+
+def log_likelihoods(gamma_inv_12, C_inv_12, m, u, u_star, h, x, Q, hs, hn, spectral):
     """ Computes the ratio of posterior probabilities from u_star/u  
             using observations and forward model evaluation. This provides part
             of the acceptance probability
@@ -94,120 +61,234 @@ def log_likelihoods(u, u_star, h, x, Q, hs, hn):
             previous_llikelihood  (float): negative log likelihood of the existing u  
     """
     
-    # TO DO: Figure out how to define gamma so that we can standardize/weight
-    # the observations when taking the weighted Euclidean norm to compute mismatch
-    # between observations and model predictions 
-#    gamma = np.diag(np.ones(len(x),)*2e+09)  #Example for now, assumes noises are independent, may need tridiagonal here....
-    gamma = ndiagonal(len(x), 
-                      np.ones(len(x),)*1e+0,
-                      np.ones(len(x),)*1e+0*0.9,
-                      np.ones(len(x),)*1e+0*0.7,
-                      np.ones(len(x),)*1e+0*0.5,
-                      np.ones(len(x),)*1e+0*0.3)
+    move = model(x, Q, u_star, hs, hn, spectral)
+    prev = model(x, Q, u, hs, hn, spectral)
+    move_llikelihood     = 0.5*matrix_norm(gamma_inv_12, h - move[0])**2 \
+                        #  + 0.5*matrix_norm(C_inv_12, m - u_star)**2
+    previous_llikelihood = 0.5*matrix_norm(gamma_inv_12, h - prev[0])**2 \
+                        #  + 0.5*matrix_norm(C_inv_12, m - u)**2
 
-        
-    # Note: The following formulation does not include a penalty for u being 
-    # far away from the prior... unless we get a well-enough defined prior where
-    # this is reasonable 
-    move_llikelihood = -0.5 * np.sum(np.linalg.inv(gamma**(1/2)) * (h - model(x, Q, u_star, hs, hn))**2)
-    previous_llikelihood =  -0.5 * np.sum(np.linalg.inv(gamma**(1/2)) * (h - model(x, Q, u, hs, hn))**2)
+    # non-negative D
+    if np.any(move[1] < 0):
+        move_llikelihood = np.inf
     
     return move_llikelihood, previous_llikelihood
 
-
-def main():
-    # TO DO:
-    # 1) Initalize markov kernel from a multivariate Gaussian with constant mean and cleverly chosen covariance   
-    # 2) Propose a new parameter u*_(n+1)
-    # 3) Set u_(n+1) = u∗_(n+1) with probability a(un, u∗_(n+1)); otherwise set u_(n+1) = u_n
-    #   Consider definining the acceptance probability like Eq 2.15 in https://clima.caltech.edu/files/2020/01/Calibrate-Emulate-Sample-2021.pdf 
-    #   This is also just the log likelihood, evaluating with a forward model
-    # 4) After the burn-in period, consider the distribution of 1000+ samples to estimate u and do UQ
-    # 5) Visualize the distribution of u (diffusivity) lat on abscissa, D on ordinate (or flipped, idc), and heatmap-like shading based on density of samples
-    
+def main(mdl):
     # Load data
-    h, x, Q, hs, hn = data()
+    h, x, Q, hs, hn = data(mdl)
 
+    # pre-compute Gamma
+    gamma = 1e0*np.identity(len(x))
+    gamma_inv_12 = fractional_matrix_power(gamma, -1/2)
 
-    # Sample from the prior distribution
-#    mean = 2.6e-4*np.ones(len(x))   #Started with constant prior
-    mean = np.r_[np.linspace(1e-4,4e-4, int(len(x)/4)), 
-                 np.linspace(4e-4,1e-4, int(len(x)/4)),
-                 np.linspace(1e-4,4e-4, int(len(x)/4)),
-                 np.linspace(4e-4,1e-4, int(len(x)/4))]        # Try a different prior, bimodal, or nearly so
-    u_arr = mean
+    # is gamma positive definite?
+    # print(np.all(np.linalg.eigvals(gamma) > 0))
 
-#    cov = np.diag(np.ones(180,)*0.1)  # diagonal covariance 
-    #(the choice of cov seems EXTREMELY important, or else MCMC won't converge...)
-    # If we expect nondiagonal covariance, need to specify it
-   
-    # Try a sample n-diagonal covariance matrix 
-    cov = ndiagonal(len(x),
-                    np.ones(len(x),)*1e-11,
-                    np.ones(len(x),)*1e-11*0.9,
-                    np.ones(len(x),)*1e-11*0.7,
-                    np.ones(len(x),)*1e-11*0.5,
-                    np.ones(len(x),)*1e-11*0.3)
-    u = np.random.multivariate_normal(mean, cov)
+    # spectral prior
+    spectral = True
+    # n_polys = 5
+    n_polys = 10
+    m = np.zeros(n_polys)
+    m[0] = 2.6e-4
+    m[4] = -1e-4
+    C = 1e-12*np.identity(len(m))
+    C_inv_12 = fractional_matrix_power(C, -1/2)
+
+    # # pointwise prior
+    # spectral = False
+    # # m = 2.6e-4*legendre(0)(x) - 1e-4*legendre(4)(x)
+    # m = 2.7e-4*legendre(0)(x) - 0.9e-4*legendre(4)(x)
+    # C = 1e-13*np.identity(len(m))
+    # C_inv_12 = fractional_matrix_power(C, -1/2)
+
+    # iteration number 
+    N = 2500
     
-    for i in range(20000):
-        # TO DO: Figure out how to sample from a Markov kernel to get u_star
-        # Would this just consider a gaussian with mean of the previous u and then some covariance? 
-        u_star = np.random.multivariate_normal(u, cov)
+    # start solution arrays
+    us = np.zeros((N + 1, len(m)))
+    h_tildes = np.zeros((N + 1, len(x)))
+    Ds = np.zeros((N + 1, len(x)))
+
+    # initialize at mean
+    u = m
+    
+    # main loop
+    for i in range(N):
+        h_tildes[i, :], Ds[i, :] = model(x, Q, u, hs, hn, spectral)
+        us[i, :] = u
+
+        # draw new parameters
+        u_star = np.random.multivariate_normal(u, C)
         
-        move, previous = log_likelihoods(u, u_star, h, x, Q, hs, hn)
-        a = np.min([previous/move, 1])
-        
+        # compute llikelihoods
+        move, prev = log_likelihoods(gamma_inv_12, C_inv_12, m, u, u_star, h, x, Q, hs, hn, spectral)
+        a = np.min([prev/move, 1])
+
         if a == 1:
             u = u_star
-        elif random.uniform(0,1) <= a:
+#        elif np.random.uniform() <= a:
+#            u = u_star
+        else:
+            u = u
+
+        if i % 100 == 0:
+            print(f"{i}/{N}: error = {prev:1.1e}")
+        
+    # Now use this u as a prior and find covariance from this to do actual MCMC
+    
+    # spectral prior
+    spectral = True
+    n_polys = 10
+    m = u
+
+    #TO DO: If needed, set covariance matrix using inverse of Hessian of last iterations from initial MCMC run
+    C = 1e-12*np.identity(len(m))
+    C_inv_12 = fractional_matrix_power(C, -1/2)
+
+    # iteration number 
+    N = 2500
+    
+    # start solution arrays
+    us = np.zeros((N + 1, len(m)))
+    h_tildes = np.zeros((N + 1, len(x)))
+    Ds = np.zeros((N + 1, len(x)))
+
+    # initialize at mean
+    u = m
+    
+    # main loop
+    for i in range(N):
+        h_tildes[i, :], Ds[i, :] = model(x, Q, u, hs, hn, spectral)
+        us[i, :] = u
+
+        # draw new parameters
+        u_star = np.random.multivariate_normal(u, C)
+        
+        # compute llikelihoods
+        move, prev = log_likelihoods(gamma_inv_12, C_inv_12, m, u, u_star, h, x, Q, hs, hn, spectral)
+        a = np.min([prev/move, 1])
+
+        if a == 1:
+            u = u_star
+        elif np.random.uniform() <= a:
             u = u_star
         else:
             u = u
 
-        u_arr = np.c_[u_arr, u] #Since u is a 1D vector, if we keep this appending method, make sure to append using the correct axis
-    
+        if i % 100 == 0:
+            print(f"{i}/{N}: error = {prev:1.1e}")
 
-    plt.plot(u_arr[1,:]) #Attempt to plot mixing/convergence at the south pole
-    plt.plot(x, u_arr[:,-1]) #Attempt to plot final meridional diffusivity
+    # final solution
+    h_tildes[N, :], Ds[N, :] = model(x, Q, u, hs, hn, spectral)
+    us[N, :] = u
+    if spectral:
+        print(u)
+
+    # save data
+    np.savez("out.npz", N=N, x=x, h=h, us=us, h_tildes=h_tildes, Ds=Ds, m=m, C_inv_12=C_inv_12, gamma_inv_12=gamma_inv_12)
+    print("out.npz")
+
+def plots(model):
+    # load data
+    d= np.load("out.npz")
+    N = d["N"]
+    x = d["x"]
+    h = d["h"]
+    us = d["us"]
+    h_tildes = d["h_tildes"]
+    Ds = d["Ds"]
+    m = d["m"]
+    C_inv_12 = d["C_inv_12"]
+    gamma_inv_12 = d["gamma_inv_12"]
     
-    sns.heatmap(u_arr)
-    plt.savefig("D_3p7.png")
-    
-    for i in range(1,25000,100):
-        plt.scatter(i,np.sum((h - model(x, Q, u_arr[:,i], hs, hn))**2))
+    # Plot sum of squared errors in h over time
+    fig, ax = plt.subplots()
+    errors_h = np.zeros(N)
+    errors_u = np.zeros(N)
+    for i in range(1, N+1):
+        errors_h[i-1] = 0.5*matrix_norm(gamma_inv_12, (h - h_tildes[i, :])/1e6)**2
+        errors_u[i-1] = 0.5*matrix_norm(C_inv_12, m - us[i, :])**2
+    ax.semilogy(errors_h, label=r"$\frac{1}{2} || h - \tilde h ||_\Gamma^2$")
+    # ax.semilogy(errors_u, label=r"$\frac{1}{2} || u - m ||_C^2$")
+    ax.legend()
+    ax.set_xlabel("iteration")
+    ax.set_ylabel(r"error")
+    # plt.savefig("error.pdf")
+    # print("error.pdf")
+    plt.savefig("error_" + str(model) + ".png")
+    print("error.png")
+    plt.close()
         
-    plt.plot(h-model(x, Q, u_arr[:,9900], hs, hn))
-    plt.plot(model(x, Q, u_arr[:,18000], hs, hn))
+    # Plot difference between EBM model predicted using our D and the true from the model
+    fig, ax = plt.subplots()
+    ax.plot(x, h/1e3, label="reference model")
+    for i in range(9):
+        ax.plot(x, h_tildes[int(i*N/9), :]/1e3, c="tab:orange", alpha=i/9)
+    ax.plot(x, h_tildes[-1, :]/1e3, c="tab:orange", label="EBM")
+    ax.set_xlabel(r"latitude $\phi$ (degrees)")
+    ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
+    ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
+    ax.set_ylabel("moist static energy $h$ (kJ kg$^{-1}$)")
+    plt.legend()
+    # plt.savefig("h.pdf")
+    # print("h.pdf")
+    plt.savefig("h_" + str(model) + ".png")
+    print("h.png")
+    plt.close()
 
-    # Try making a plot to show uncertainty in D at different latitudes
+    # plot final D
+    fig, ax = plt.subplots()
+    # d = np.load("data/h_Q_synthetic.npz")
+    # D_true = d["D"]
+    # ax.plot(x, 1e4*D_true, label="reference model")
+    ax.plot(x, 1e4*Ds[-1, :], label="inverse result")
+    ax.plot(x, 1e4*Ds[0, :], "--", label="init. cond.")
+    ax.legend()
+    ax.set_xlabel(r"latitude $\phi$ (degrees)")
+    ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
+    ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
+    plt.ylabel(r"diffusivity $D$ ($\times 10^{-4}$ kg m$^{-2}$ s$^{-1}$)")
+    # plt.savefig('D.pdf')
+    # print("D.pdf")
+    plt.savefig('D_' + str(model) + '.png')
+    print("D.png")
+    plt.close()
+    
+    # plot uncertainty in D
     lat_med = []
     lat_std = []
     lat_percentile = []
     for i in range(len(x)):
-        lat_med = np.append(lat_med, np.median(u_arr[i,-2500:]))
-        lat_std = np.append(lat_std, np.std(u_arr[i,-2500:]))
+        lat_med = np.append(lat_med, np.median(Ds[:, i]))
+        lat_std = np.append(lat_std, np.std(Ds[:, i]))
         try:
-            lat_percentile.append(np.percentile(u_arr[i,-2500:], [5,25,50,75,95]))
+            lat_percentile.append(np.percentile(Ds[:, i], [5,25,50,75,95]))
         except:
             lat_percentile.append(np.percentile((np.nan), [5,25,50,75,95]))
 
     lat_percentile = np.array(lat_percentile)
 
     fig, ax = plt.subplots()
-    fig.set_size_inches(8, 6, forward=True)
-    fig.set_dpi(100)
     ax.fill_between(x, lat_percentile[:,0], lat_percentile[:,4], color='red', alpha=0.15, lw=3)
     ax.fill_between(x, lat_percentile[:,1], lat_percentile[:,3], color='red', alpha=0.35, lw=3)
     ax.plot(x, lat_percentile[:,2], color='k', lw=3)  # Plot the median  data
     #plt.grid(axis='x', color='#f2f2f2')
     plt.grid(axis='y', color='#dedede')
     plt.suptitle('')
+    ax.set_xlabel(r"latitude $\phi$ (degrees)")
+    ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
+    ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
+    plt.ylabel(r"diffusivity $D$ ($\times 10^{-4}$ kg m$^{-2}$ s$^{-1}$)")
     plt.title('Uncertainty in D')
-    plt.xlabel('$sin(\phi)$', fontsize=12)
     plt.ylabel('Diffusivity D [kg $m^{-2} s^{-1}$]', fontsize=12, labelpad=0)
-    plt.savefig('D_percentiles_6.png', format='png')
+    plt.tight_layout()
+    plt.savefig('D_percentiles_new_' + str(model) + '.png', format='png')
     plt.show()
 
+
 if __name__ == '__main__':
-    main()
+#    for mdl in ["h_Q_CAN-ESM2", "h_Q_CNRM-CM5", "h_Q_GFDL-CM3", "h_Q_MIROC-ESM", "h_Q_INM-CM4"]:
+    for mdl in ["h_Q_ACCESS1-0", "h_Q_ACCESS1-3", "h_Q_GFDL-ESM2G", "h_Q_GFDL-ESM2M", "h_Q_IPSL-CM5ALR", "h_Q_MPI-ESMLR", "h_Q_MRI-CGCM3", "h_Q_NOR-ESM1M" ]:
+        main(mdl)
+        plots(mdl)
