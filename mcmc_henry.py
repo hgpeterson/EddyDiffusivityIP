@@ -26,6 +26,9 @@ def data():
     hs = h[0]
     hn = h[-1]
 
+    # # add noise to h?
+    # h += np.random.normal(loc=0.0, scale=np.mean(h)/100, size=h.shape)
+
     return h, x, Q, hs, hn
 
 def model(x, Q, D, hs, hn, spectral):
@@ -79,31 +82,28 @@ def main():
     h, x, Q, hs, hn = data()
 
     # pre-compute Gamma
-    gamma = 1e0*np.identity(len(x))
-    gamma_inv_12 = fractional_matrix_power(gamma, -1/2)
+    gamma_inv_12 = np.identity(len(x))
 
-    # is gamma positive definite?
-    # print(np.all(np.linalg.eigvals(gamma) > 0))
-
-    # spectral prior
+    # spectral 
     spectral = True
-    # n_polys = 5
     n_polys = 10
     m = np.zeros(n_polys)
-    m[0] = 2.6e-4
+    # m[0] = 2.6e-4
+    m[0] = 3.1e-4
     m[4] = -1e-4
-    C = 1e-12*np.identity(len(m))
+    # m = np.array([2.64097918e-04, -2.16454667e-06, -1.03828721e-05, -9.75962728e-06, -8.66203104e-05])
+    # m = np.array([ 3.17431465e-04 -4.83683689e-05  8.23995368e-05  9.01738600e-05 8.49767620e-06 -1.46483938e-05  6.31743543e-05 -2.40702704e-05 5.70811678e-05 -7.10327860e-06])
+    C = 1e-13*np.identity(len(m))
     C_inv_12 = fractional_matrix_power(C, -1/2)
 
-    # # pointwise prior
+    # # pointwise 
     # spectral = False
-    # # m = 2.6e-4*legendre(0)(x) - 1e-4*legendre(4)(x)
-    # m = 2.7e-4*legendre(0)(x) - 0.9e-4*legendre(4)(x)
-    # C = 1e-13*np.identity(len(m))
+    # m = 3.1e-4*legendre(0)(x) - 1e-4*legendre(4)(x)
+    # C = 1e-11*np.identity(len(m))
     # C_inv_12 = fractional_matrix_power(C, -1/2)
 
     # iteration number 
-    N = 1000
+    N = 4000
     
     # start solution arrays
     us = np.zeros((N + 1, len(m)))
@@ -113,29 +113,61 @@ def main():
     # initialize at mean
     u = m
     
-    # main loop
-    for i in range(N):
+    # first loop: only pick solutions that reduce the LL
+    for i in range(N//2):
         h_tildes[i, :], Ds[i, :] = model(x, Q, u, hs, hn, spectral)
         us[i, :] = u
 
         # draw new parameters
         u_star = np.random.multivariate_normal(u, C)
         
-        # compute llikelihoods
+        # compute LLs
         move, prev = log_likelihoods(gamma_inv_12, C_inv_12, m, u, u_star, h, x, Q, hs, hn, spectral)
+
+        # only pick solutions that reduce the LL
+        if move < prev:
+            u = u_star
+
+        if i % 100 == 0:
+            print(f"{i}/{N}: error = {prev:1.1e}")
+
+    if spectral:
+        print(u)
+
+    # empirical covariance
+    # C = np.cov(us[N//4:N//2, :].T)
+    C = 1e-13*np.identity(len(u))
+    C_inv_12 = fractional_matrix_power(C, -1/2)
+    # fig, ax = plt.subplots()
+    # vmax = np.max(np.abs(C))
+    # plt.imshow(C, vmin=-vmax, vmax=vmax, cmap="RdBu_r")
+    # plt.colorbar()
+    # plt.savefig("C.png")
+    # plt.close()
+
+    # second loop: Metropolosi-Hastings
+    for i in range(N//2, N): 
+        h_tildes[i, :], Ds[i, :] = model(x, Q, u, hs, hn, spectral)
+        us[i, :] = u
+
+        # draw new parameters
+        u_star = np.random.multivariate_normal(u, C)
+        
+        # compute LLs
+        move, prev = log_likelihoods(gamma_inv_12, C_inv_12, m, u, u_star, h, x, Q, hs, hn, spectral)
+
         a = np.min([prev/move, 1])
 
         if a == 1:
             u = u_star
-        # elif np.random.uniform() <= a:
-        #     u = u_star
+        elif np.random.uniform() <= a and i > 1000: # just prioritize minimizing LL for the first 1000 iterations
+            u = u_star
         else:
             u = u
 
         if i % 100 == 0:
             print(f"{i}/{N}: error = {prev:1.1e}")
         
-
     # final solution
     h_tildes[N, :], Ds[N, :] = model(x, Q, u, hs, hn, spectral)
     us[N, :] = u
@@ -162,10 +194,10 @@ def plots():
     # Plot sum of squared errors in h over time
     fig, ax = plt.subplots()
     errors_h = np.zeros(N)
-    errors_u = np.zeros(N)
+    # errors_u = np.zeros(N)
     for i in range(1, N+1):
-        errors_h[i-1] = 0.5*matrix_norm(gamma_inv_12, (h - h_tildes[i, :])/1e6)**2
-        errors_u[i-1] = 0.5*matrix_norm(C_inv_12, m - us[i, :])**2
+        errors_h[i-1] = 0.5*matrix_norm(gamma_inv_12, h - h_tildes[i, :])**2
+        # errors_u[i-1] = 0.5*matrix_norm(C_inv_12, m - us[i, :])**2
     ax.semilogy(errors_h, label=r"$\frac{1}{2} || h - \tilde h ||_\Gamma^2$")
     # ax.semilogy(errors_u, label=r"$\frac{1}{2} || u - m ||_C^2$")
     ax.legend()
@@ -179,10 +211,10 @@ def plots():
         
     # Plot difference between EBM model predicted using our D and the true from the model
     fig, ax = plt.subplots()
-    ax.plot(x, h/1e3, label="reference model")
     for i in range(9):
-        ax.plot(x, h_tildes[int(i*N/9), :]/1e3, c="tab:orange", alpha=i/9)
-    ax.plot(x, h_tildes[-1, :]/1e3, c="tab:orange", label="EBM")
+        ax.plot(x, h_tildes[int(i*N/9), :]/1e3, c="tab:blue", alpha=i/9)
+    ax.plot(x, h_tildes[-1, :]/1e3, c="tab:blue", label=r"$\tilde h$")
+    ax.plot(x, h/1e3, c="tab:orange", label=r"$h$")
     ax.set_xlabel(r"latitude $\phi$ (degrees)")
     ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
     ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
@@ -196,11 +228,11 @@ def plots():
 
     # plot final D
     fig, ax = plt.subplots()
+    ax.plot(x, 1e4*Ds[0, :], label="init. cond.")
+    ax.plot(x, 1e4*Ds[-1, :], label="inverse result")
     # d = np.load("data/h_Q_synthetic.npz")
     # D_true = d["D"]
-    # ax.plot(x, 1e4*D_true, label="reference model")
-    ax.plot(x, 1e4*Ds[-1, :], label="inverse result")
-    ax.plot(x, 1e4*Ds[0, :], "--", label="init. cond.")
+    # ax.plot(x, 1e4*D_true, label="truth")
     ax.legend()
     ax.set_xlabel(r"latitude $\phi$ (degrees)")
     ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))

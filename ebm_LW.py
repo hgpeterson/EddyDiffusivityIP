@@ -1,59 +1,16 @@
 import numpy as np
 from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import splu
+from scipy.special import legendre
 import matplotlib.pyplot as plt
 import os
 
+plt.style.use("plots.mplstyle")
+
 # Constants 
-ps = 98000     # surface pressure (kg m-1 s-2)
-cp = 1005      # specific heat capacity at constant pressure (J kg-1 K-1)
-RH = 0.8       # relative humidity (0-1)
-Lv = 2257000   # latent heat of vaporization (J kg-1)
-
-def qsat(t, p):
-    """
-        qsat = qsat(t, p)
-
-    Computes saturation specific humidity (qsat), given inputs temperature (t) in K and
-    pressure (p) in hPa.
-                            
-    Buck (1981, J. Appl. Meteorol.)
-    """
-    tc=t-273.16;
-    tice=-23;
-    t0=0;
-    Rd=287.04;
-    Rv=461.5;
-    epsilon=Rd/Rv;
-    ewat=(1.0007+(3.46e-6*p))*6.1121*np.exp(17.502*tc/(240.97+tc))
-    eice=(1.0003+(4.18e-6*p))*6.1115*np.exp(22.452*tc/(272.55+tc))
-    eint=eice+(ewat-eice)*((tc-tice)/(t0-tice))**2
-    esat=eint
-    esat[np.where(tc<tice)]=eice[np.where(tc<tice)]
-    esat[np.where(tc>t0)]=ewat[np.where(tc>t0)]
-    qsat = epsilon*esat/(p-esat*(1-epsilon));
-    return qsat
-
-# datasets of T, q, and h to be able to convert from one to the other
-T_dataset = np.arange(100, 400, 1e-3)
-q_dataset = qsat(T_dataset, ps/100)
-h_dataset = cp*T_dataset + RH*q_dataset*Lv
-
-def h_from_T(T):
-    """
-        h = h_from_T(T)
-
-    Compute h = cp*T + RH*Lv*q(T).
-    """
-    return cp*T + RH*Lv*qsat(T, ps/100)
-
-def T_from_h(h):
-    """
-        T = T_from_h(h)
-
-    Compute T from h = cp*T + RH*Lv*q(T).
-    """
-    return T_dataset[np.searchsorted(h_dataset, h)]
+cp = 1005       # specific heat capacity at constant pressure (J kg-1 K-1)
+RH = 0.8        # relative humidity (0-1)
+Lv = 2257000    # latent heat of vaporization (J kg-1)
 
 def add_node(rcd, r, c, d):
     """
@@ -105,25 +62,36 @@ class EBM():
     This model solves the ODE
         -d/dx [ D(x) (1 - x**2) d/dx h(x) ] = S - (A + B*T)
     where D is the eddy diffusivity, x = sine latitude, h is moist static energy,
-    and S is the SW energy input. The model uses the finite element method. It 
-    is designed to take x, S, and D as inputs and output h.
+    S is the SW energy input, and A and B linearize the LW energy output. The model 
+    uses the finite element method. It is designed to take x, S, D, A, and B as inputs 
+    and output h.
     """
 
-    def __init__(self, x, S, D, A, B):
-        # givens
-        self.x = x   # grid (sine latitude)
-        self.S = S   # net energy input (W m-2)
-        self.D = D   # eddy diffusivity (kg m-2 s-1)
-        self.A = A
-        self.B = B
-
-        # initial MSE 
-        hmax = 350000
-        hmin = 250000
-        self.h = 2/3*hmax + 1/3*hmin - 1/3*(hmax - hmin)*(3*self.x**2 - 1)
-
-        # computables
+    def __init__(self, x, S, D, A, B, spectral=False):
+        # params
+        self.x = x  # grid (sine latitude)
+        self.S = S  # SW energy input (W m-2)
+        self.A = A  # constant term from linearized LW input (W m-2) 
+        self.B = B  # linear term from linearized LW input (W m-2 K-1)
         self.n = len(x) # number of grid points
+
+        # linearize T(h) = a + b*h
+        T0 = 273.15 # triple point (K)
+        q0 = 3.9e-3 # sat spec hum q at T0 and ps
+        beta = 0.07 # dq/dT at T0 and ps
+        self.a = -RH*Lv*q0*(1 - beta*T0) / (cp + RH*Lv*q0*beta)
+        self.b = 1 / (cp + RH*Lv*q0*beta)
+
+        # compute eddy diffusivity (kg m-2 s-1)
+        if spectral:
+            # using Legendre polynomials
+            legendre_polys = np.zeros((self.n, len(D)))
+            for i in range(len(D)):
+                legendre_polys[:, i] = legendre(i)(x)
+            self.D = np.dot(legendre_polys, D)
+        else:
+            # given directly
+            self.D = D   
 
     def _generate_linear_system(self):
         """
@@ -135,9 +103,6 @@ class EBM():
         """
         rcd = np.empty([0, 3])    # row-column-data array: components of CSC matrix A
         b = np.zeros((self.n, 1)) # right-hand-side vector b
-
-        # compute T
-        self.T = T_from_h(self.h)
 
         # assemble A and b using stamping
         for i in range(self.n-1):
@@ -152,32 +117,33 @@ class EBM():
             # approximate D, T, and S as linear on I
             D = lerp([x0, self.D[i]], [x1, self.D[i+1]])
             S = lerp([x0, self.S[i]], [x1, self.S[i+1]])
-            T = lerp([x0, self.T[i]], [x1, self.T[i+1]])
 
-            # integrate (1 - x^2)*D and Q*(mx + b) using Gaussian quadrature
+            # stamp integral components for diffusivity term: (1 - x**2)*D
             intD  = gquad2(lambda x: (1 - x**2)*D(x),  x0, x1)
-            intS0 = gquad2(lambda x: (b0 + m0*x)*S(x), x0, x1)
-            intS1 = gquad2(lambda x: (b1 + m1*x)*S(x), x0, x1)
-            intT0 = gquad2(lambda x: (b0 + m0*x)*(self.A + self.B*T(x)), x0, x1)
-            intT1 = gquad2(lambda x: (b1 + m1*x)*(self.A + self.B*T(x)), x0, x1)
-
-            # stamp integral components for diffusivity term
             rcd = add_node(rcd, i, i,     m0*m0*intD)
             rcd = add_node(rcd, i, i+1,   m0*m1*intD)
             rcd = add_node(rcd, i+1, i,   m1*m0*intD)
             rcd = add_node(rcd, i+1, i+1, m1*m1*intD)
 
-            # stamp integral components for RHS
+            # stamp integral components for LW term: A + B*T => A + a*B + b*B*h
+            LW00 = self.b*self.B*gquad2(lambda x: (b0 + m0*x)*(b0 + m0*x), x0, x1)
+            LW01 = self.b*self.B*gquad2(lambda x: (b0 + m0*x)*(b1 + m1*x), x0, x1)
+            LW10 = self.b*self.B*gquad2(lambda x: (b1 + m1*x)*(b0 + m0*x), x0, x1)
+            LW11 = self.b*self.B*gquad2(lambda x: (b1 + m1*x)*(b1 + m1*x), x0, x1)
+            rcd = add_node(rcd, i, i,     LW00)
+            rcd = add_node(rcd, i, i+1,   LW01)
+            rcd = add_node(rcd, i+1, i,   LW10)
+            rcd = add_node(rcd, i+1, i+1, LW11)
+            intA0 = gquad2(lambda x: (b0 + m0*x)*(self.A + self.a*self.B), x0, x1)
+            intA1 = gquad2(lambda x: (b1 + m1*x)*(self.A + self.a*self.B), x0, x1)
+            b[i]   -= intA0
+            b[i+1] -= intA1
+
+            # stamp integral components for SW term: S
+            intS0 = gquad2(lambda x: (b0 + m0*x)*S(x), x0, x1)
+            intS1 = gquad2(lambda x: (b1 + m1*x)*S(x), x0, x1)
             b[i]   += intS0
             b[i+1] += intS1
-
-            # # stamp integral components for LW term
-            # b[i]   -= intT0
-            # b[i+1] -= intT1
-            rcd = add_node(rcd, i, i,     gquad2(lambda x: self.B*(b0 + m0*x)*(b0 + m0*x), x0, x1))
-            rcd = add_node(rcd, i, i+1,   gquad2(lambda x: self.B*(b0 + m0*x)*(b1 + m1*x), x0, x1))
-            rcd = add_node(rcd, i+1, i,   gquad2(lambda x: self.B*(b1 + m1*x)*(b0 + m0*x), x0, x1))
-            rcd = add_node(rcd, i+1, i+1, gquad2(lambda x: self.B*(b1 + m1*x)*(b1 + m1*x), x0, x1))
 
         # assemble sparse matrix
         A = csc_matrix((rcd[:, 2], (rcd[:, 0], rcd[:, 1])), shape=(self.n, self.n))
@@ -191,37 +157,30 @@ class EBM():
 
         Generate and solve A h = b.
         """
-        for i in range(10):
-            # generate A and b
-            A, b = self._generate_linear_system()
-
-            # solve system
-            h = A.solve(b) 
-
-            # print error
-            print(np.max(np.abs(h - self.h)/self.h))
-
-            # set h
-            self.h = h
+        A, b = self._generate_linear_system()
+        h = A.solve(b) 
 
         return h
 
 # test problem
-n = 2**8
+n = 2**7
 x = np.linspace(-1, 1, n)
-S = 1365/np.pi*np.cos(np.arcsin(x))*(1 - 0.33)
-A = 203.3
-S -= A
-B = 2.09
-D = 2.6e-4*np.ones(n)
+S = 1365/4*(1 - 0.3)*np.cos(np.arcsin(x))
+B = 2.09 
+A = 203.3 - 273.15*B
 
-ebm = EBM(x, S, D, A, B)
+# D = 2.6e-4*np.ones(n)
+# ebm = EBM(x, S, D, A, B, spectral=False)
+
+D = np.zeros(20)
+D[0] = 2.6e-4
+D[4] = -1e-4
+ebm = EBM(x, S, D, A, B, spectral=True)
 h = ebm.solve()
 
 plt.plot(x, h/1e3)
 plt.xlabel("$x$")
 plt.ylabel("$h$ (kJ kg$^{-1}$)")
-plt.tight_layout()
 plt.savefig("h.png")
 print("h.png")
 plt.close()

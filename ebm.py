@@ -74,14 +74,6 @@ class EBM():
             for i in range(len(D)):
                 legendre_polys[:, i] = legendre(i)(x)
             self.D = np.dot(legendre_polys, D)
-            # # using fourier serier
-            # fourier = np.zeros((self.n, len(D)))
-            # for i in range(len(D)):
-            #     if i % 2 == 0:
-            #         fourier[:, i] = np.cos(i/2*np.pi*x/2)
-            #     else:
-            #         fourier[:, i] = np.sin((i + 1)/2*np.pi*x/2)
-            # self.D = np.dot(fourier, D)
         else:
             # given directly
             self.D = D   
