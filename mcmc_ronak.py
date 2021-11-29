@@ -6,19 +6,19 @@ from scipy.linalg import fractional_matrix_power
 from scipy.special import legendre
 import os
 
-np.random.seed(42)
+np.random.seed(64)
 
 plt.style.use("plots.mplstyle")
 
-def data():
+def data(mdl):
     """ Loads observed (or climate model) Moist Static Energy h. 
     Should be 1d arr
     
     Arguments: 
-        model (str): CMIP5 model that corresponds to the name of the .npz file
+        mdl (str): CMIP5 model that corresponds to the name of the .npz file
     """
     # TO DO: Add argument for different models
-    d = np.load("data/h_Q_CNRM-CM5.npz")
+    d = np.load("data/" + str(mdl) + ".npz")
     # d = np.load("data/h_Q_synthetic.npz")
     h = d["h"]
     x = d["x"]
@@ -74,9 +74,9 @@ def log_likelihoods(gamma_inv_12, C_inv_12, m, u, u_star, h, x, Q, hs, hn, spect
     
     return move_llikelihood, previous_llikelihood
 
-def main():
+def main(mdl):
     # Load data
-    h, x, Q, hs, hn = data()
+    h, x, Q, hs, hn = data(mdl)
 
     # pre-compute Gamma
     gamma = 1e0*np.identity(len(x))
@@ -103,7 +103,7 @@ def main():
     # C_inv_12 = fractional_matrix_power(C, -1/2)
 
     # iteration number 
-    N = 1000
+    N = 2500
     
     # start solution arrays
     us = np.zeros((N + 1, len(m)))
@@ -127,14 +127,57 @@ def main():
 
         if a == 1:
             u = u_star
-        # elif np.random.uniform() <= a:
-        #     u = u_star
+#        elif np.random.uniform() <= a:
+#            u = u_star
         else:
             u = u
 
         if i % 100 == 0:
             print(f"{i}/{N}: error = {prev:1.1e}")
         
+    # Now use this u as a prior and find covariance from this to do actual MCMC
+    
+    # spectral prior
+    spectral = True
+    n_polys = 10
+    m = u
+
+    #TO DO: If needed, set covariance matrix using inverse of Hessian of last iterations from initial MCMC run
+    C = 1e-12*np.identity(len(m))
+    C_inv_12 = fractional_matrix_power(C, -1/2)
+
+    # iteration number 
+    N = 2500
+    
+    # start solution arrays
+    us = np.zeros((N + 1, len(m)))
+    h_tildes = np.zeros((N + 1, len(x)))
+    Ds = np.zeros((N + 1, len(x)))
+
+    # initialize at mean
+    u = m
+    
+    # main loop
+    for i in range(N):
+        h_tildes[i, :], Ds[i, :] = model(x, Q, u, hs, hn, spectral)
+        us[i, :] = u
+
+        # draw new parameters
+        u_star = np.random.multivariate_normal(u, C)
+        
+        # compute llikelihoods
+        move, prev = log_likelihoods(gamma_inv_12, C_inv_12, m, u, u_star, h, x, Q, hs, hn, spectral)
+        a = np.min([prev/move, 1])
+
+        if a == 1:
+            u = u_star
+        elif np.random.uniform() <= a:
+            u = u_star
+        else:
+            u = u
+
+        if i % 100 == 0:
+            print(f"{i}/{N}: error = {prev:1.1e}")
 
     # final solution
     h_tildes[N, :], Ds[N, :] = model(x, Q, u, hs, hn, spectral)
@@ -146,7 +189,7 @@ def main():
     np.savez("out.npz", N=N, x=x, h=h, us=us, h_tildes=h_tildes, Ds=Ds, m=m, C_inv_12=C_inv_12, gamma_inv_12=gamma_inv_12)
     print("out.npz")
 
-def plots():
+def plots(model):
     # load data
     d= np.load("out.npz")
     N = d["N"]
@@ -173,7 +216,7 @@ def plots():
     ax.set_ylabel(r"error")
     # plt.savefig("error.pdf")
     # print("error.pdf")
-    plt.savefig("error.png")
+    plt.savefig("error_" + str(model) + ".png")
     print("error.png")
     plt.close()
         
@@ -190,7 +233,7 @@ def plots():
     plt.legend()
     # plt.savefig("h.pdf")
     # print("h.pdf")
-    plt.savefig("h.png")
+    plt.savefig("h_" + str(model) + ".png")
     print("h.png")
     plt.close()
 
@@ -208,10 +251,44 @@ def plots():
     plt.ylabel(r"diffusivity $D$ ($\times 10^{-4}$ kg m$^{-2}$ s$^{-1}$)")
     # plt.savefig('D.pdf')
     # print("D.pdf")
-    plt.savefig('D.png')
+    plt.savefig('D_' + str(model) + '.png')
     print("D.png")
     plt.close()
+    
+    # plot uncertainty in D
+    lat_med = []
+    lat_std = []
+    lat_percentile = []
+    for i in range(len(x)):
+        lat_med = np.append(lat_med, np.median(Ds[:, i]))
+        lat_std = np.append(lat_std, np.std(Ds[:, i]))
+        try:
+            lat_percentile.append(np.percentile(Ds[:, i], [5,25,50,75,95]))
+        except:
+            lat_percentile.append(np.percentile((np.nan), [5,25,50,75,95]))
+
+    lat_percentile = np.array(lat_percentile)
+
+    fig, ax = plt.subplots()
+    ax.fill_between(x, lat_percentile[:,0], lat_percentile[:,4], color='red', alpha=0.15, lw=3)
+    ax.fill_between(x, lat_percentile[:,1], lat_percentile[:,3], color='red', alpha=0.35, lw=3)
+    ax.plot(x, lat_percentile[:,2], color='k', lw=3)  # Plot the median  data
+    #plt.grid(axis='x', color='#f2f2f2')
+    plt.grid(axis='y', color='#dedede')
+    plt.suptitle('')
+    ax.set_xlabel(r"latitude $\phi$ (degrees)")
+    ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
+    ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
+    plt.ylabel(r"diffusivity $D$ ($\times 10^{-4}$ kg m$^{-2}$ s$^{-1}$)")
+    plt.title('Uncertainty in D')
+    plt.ylabel('Diffusivity D [kg $m^{-2} s^{-1}$]', fontsize=12, labelpad=0)
+    plt.tight_layout()
+    plt.savefig('D_percentiles_new_' + str(model) + '.png', format='png')
+    plt.show()
+
 
 if __name__ == '__main__':
-    main()
-    plots()
+#    for mdl in ["h_Q_CAN-ESM2", "h_Q_CNRM-CM5", "h_Q_GFDL-CM3", "h_Q_MIROC-ESM", "h_Q_INM-CM4"]:
+    for mdl in ["h_Q_ACCESS1-0", "h_Q_ACCESS1-3", "h_Q_GFDL-ESM2G", "h_Q_GFDL-ESM2M", "h_Q_IPSL-CM5ALR", "h_Q_MPI-ESMLR", "h_Q_MRI-CGCM3", "h_Q_NOR-ESM1M" ]:
+        main(mdl)
+        plots(mdl)
