@@ -64,9 +64,9 @@ def log_likelihoods(gamma_inv_12, C_inv_12, m, u, u_star, h, x, Q, hs, hn, spect
     move = model(x, Q, u_star, hs, hn, spectral)
     prev = model(x, Q, u, hs, hn, spectral)
     move_llikelihood     = 0.5*matrix_norm(gamma_inv_12, h - move[0])**2 \
-                        #  + 0.5*matrix_norm(C_inv_12, m - u_star)**2
+                          + 0.5*matrix_norm(1e7, m - u_star)**2  #First tried the matrix norm of C_inv_12, but the orders of magnitude between that and h are vastly different.
     previous_llikelihood = 0.5*matrix_norm(gamma_inv_12, h - prev[0])**2 \
-                        #  + 0.5*matrix_norm(C_inv_12, m - u)**2
+                          + 0.5*matrix_norm(1e7, m - u)**2
 
     # non-negative D
     if np.any(move[1] < 0):
@@ -289,6 +289,8 @@ def plots(model):
 
 if __name__ == '__main__':
 #    for mdl in ["h_Q_CAN-ESM2", "h_Q_CNRM-CM5", "h_Q_GFDL-CM3", "h_Q_MIROC-ESM", "h_Q_INM-CM4"]:
-    for mdl in ["h_Q_ACCESS1-0", "h_Q_ACCESS1-3", "h_Q_GFDL-ESM2G", "h_Q_GFDL-ESM2M", "h_Q_IPSL-CM5ALR", "h_Q_MPI-ESMLR", "h_Q_MRI-CGCM3", "h_Q_NOR-ESM1M" ]:
+#    for mdl in ["h_Q_ACCESS1-0", "h_Q_ACCESS1-3", "h_Q_GFDL-ESM2G", "h_Q_GFDL-ESM2M", "h_Q_IPSL-CM5ALR", "h_Q_MPI-ESMLR", "h_Q_MRI-CGCM3", "h_Q_NOR-ESM1M" ]:
+    for mdl in ["h_Q_CAN-ESM2" ]:
         main(mdl)
         plots(mdl)
+        
