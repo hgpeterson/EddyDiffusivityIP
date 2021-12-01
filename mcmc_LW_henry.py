@@ -1,7 +1,7 @@
 from sys import modules
 import numpy as np
 import matplotlib.pyplot as plt
-from ebm import EBM
+from ebm_LW import EBM
 from scipy.linalg import fractional_matrix_power
 from scipy.special import legendre
 from scipy.optimize import minimize
@@ -19,27 +19,26 @@ def data():
         model (str): CMIP5 model that corresponds to the name of the .npz file
     """
     # TO DO: Add argument for different models
-    # d = np.load("data/h_Q_CNRM-CM5.npz")
-    d = np.load("data/h_Q_synthetic.npz")
+    d = np.load("data/h_Q_CNRM-CM5.npz")
+    # d = np.load("data/h_Q_GFDL-CM3.npz")
+    # d = np.load("data/h_Q_synthetic.npz")
     h = d["h"]
     x = d["x"]
-    Q = d["Q"]
-    hs = h[0]
-    hn = h[-1]
+    S = d["Q_no_TOA_LW"]
 
-    # add noise to h?
-    h += np.random.normal(loc=0.0, scale=np.mean(h)/100, size=h.shape)
+    # # add noise to h?
+    # h += np.random.normal(loc=0.0, scale=np.mean(h)/100, size=h.shape)
 
-    return h, x, Q, hs, hn
+    return h, x, S
 
-def model(x, Q, D, hs, hn, spectral):
+def model(x, S, u, spectral):
     """ Define the forward model, or just import it as a separate python 
             function with documented inputs/outputs
     Arguments:
         D (arr): Diffusivity
     """
     # Start with simple model
-    ebm = EBM(x, Q, D, hs, hn, spectral)
+    ebm = EBM(x, S, u[:-2], u[-2], u[-1], spectral)
     h_tilde = ebm.solve()
     
     return h_tilde, ebm.D
@@ -56,9 +55,9 @@ def matrix_norm(A_inv_12, u):
     """
     return np.linalg.norm(np.dot(A_inv_12, u))
 
-def log_likelihood(u, gamma_inv_12, h, x, Q, hs, hn, spectral):
+def log_likelihood(u, gamma_inv_12, h, x, S, spectral):
     # compute negative log likelihood
-    h_tilde, D_tilde = model(x, Q, u, hs, hn, spectral)
+    h_tilde, D_tilde = model(x, S, u, spectral)
     ll = 0.5*matrix_norm(gamma_inv_12, h - h_tilde)**2
 
     # non-negative D
@@ -67,7 +66,7 @@ def log_likelihood(u, gamma_inv_12, h, x, Q, hs, hn, spectral):
 
     return ll
 
-def log_likelihoods(gamma_inv_12, u, u_star, h, x, Q, hs, hn, spectral):
+def log_likelihoods(gamma_inv_12, u, u_star, h, x, S, spectral):
     """ Computes the ratio of posterior probabilities from u_star/u  
             using observations and forward model evaluation. This provides part
             of the acceptance probability
@@ -76,72 +75,76 @@ def log_likelihoods(gamma_inv_12, u, u_star, h, x, Q, hs, hn, spectral):
             previous_llikelihood  (float): negative log likelihood of the existing u  
     """
     
-    prev_ll = log_likelihood(u, gamma_inv_12, h, x, Q, hs, hn, spectral)
-    move_ll = log_likelihood(u_star, gamma_inv_12, h, x, Q, hs, hn, spectral)
+    prev_ll = log_likelihood(u, gamma_inv_12, h, x, S, spectral)
+    move_ll = log_likelihood(u_star, gamma_inv_12, h, x, S, spectral)
     
     return move_ll, prev_ll
 
 def main():
     # Load data
-    h, x, Q, hs, hn = data()
+    h, x, S = data()
 
     # pre-compute Gamma
     gamma_inv_12 = np.identity(len(x))
 
     # spectral 
     spectral = True
-    # n_polys = 10
-    n_polys = 5
-    u0 = np.zeros(n_polys)
-    u0[0] = 4e-4
-    # u0[0] = 3.1e-4
-    # u0[4] = -1e-4
-    C = 1e-11*np.identity(len(u0))
+    # n_polys = 6
+    # m = np.zeros(n_polys + 2)
+    # m[0] = 0
+    # m[1] = 4e-4
+    # m[2] = 2e-4
+    # m[3] = 2e-4
+    # m[4] = 4e-4
+    # m[5] = 0
 
-    # iterations 
-    N_ml = 2000
-    N_mcmc = 4000
+    n_polys = 7
+    m = np.zeros(n_polys + 2)
+    m[2] = 4e-4
+    m[4] = 4e-4
+
+    m[-2] = -1e2
+    m[-1] = 2e0
+
+    C = 1e-11*np.identity(len(m))
+
+    C[-2, -2] = 1e-5
+    C[-1, -1] = 1e-5
+
+    C_inv_12 = fractional_matrix_power(C, -1/2)
+
+    # number of iterations
+    N = 200
     
-    # initialize
-    u = u0
-    h0, D0 = model(x, Q, u, hs, hn, spectral)
-    
-    # first loop: Maximum Likelihood
-    for i in range(N_ml):
-        # draw new parameters
-        u_star = np.random.multivariate_normal(u, C)
-        
-        # compute LLs
-        move, prev = log_likelihoods(gamma_inv_12, u, u_star, h, x, Q, hs, hn, spectral)
-
-        # only pick solutions that reduce the LL
-        if move < prev:
-            u = u_star
-
-        if i % 100 == 0:
-            print(f"{i}/{N_ml}: error = {prev:1.1e}")
-
-    if spectral:
-        print("Maximum-Likelihood: ", u)
-
     # start solution arrays
-    us = np.zeros((N_mcmc + 1, len(u)))
-    h_tildes = np.zeros((N_mcmc + 1, len(x)))
-    Ds = np.zeros((N_mcmc + 1, len(x)))
+    us = np.zeros((N + 1, len(m)))
+    h_tildes = np.zeros((N + 1, len(x)))
+    Ds = np.zeros((N + 1, len(x)))
 
-    # different C for MCMC
-    C = 1e-12*np.identity(len(u))
+    # maximum likelihood solution initialized at m
+    nll = lambda *args: log_likelihood(*args)
+    soln = minimize(nll, m, args=(gamma_inv_12, h, x, S, spectral))
+    u = soln.x
+    c_hat = 2*soln.hess_inv
+    sigma = np.minimum(np.diag(c_hat)**0.5, 5e-5*np.ones(u.size))
 
-    # second loop: Metropolis-Hastings
-    for i in range(N_mcmc): 
-        h_tildes[i, :], Ds[i, :] = model(x, Q, u, hs, hn, spectral)
+    print("Maximum likelihood estimates:")
+    print(u)
+
+    print("Sigmas:")
+    print(sigma)
+    # u = [-1.26738654e-02,1.70174890e-02,-6.47831124e-03,2.34328232e-03,3.49539900e-04,-7.98193981e-03,8.25455115e-03,-2.20258701e+02,1.65905996e+00]
+
+    # Metropolis-Hastings
+    for i in range(N): 
+        h_tildes[i, :], Ds[i, :] = model(x, S, u, spectral)
         us[i, :] = u
 
         # draw new parameters
         u_star = np.random.multivariate_normal(u, C)
         
         # compute LLs
-        move, prev = log_likelihoods(gamma_inv_12, u, u_star, h, x, Q, hs, hn, spectral)
+        move, prev = log_likelihoods(gamma_inv_12, u, u_star, h, x, S, spectral)
 
         a = np.min([prev/move, 1])
 
@@ -153,16 +156,16 @@ def main():
             u = u
 
         if i % 100 == 0:
-            print(f"{i}/{N_mcmc}: error = {prev:1.1e}")
+            print(f"{i}/{N}: error = {prev:1.1e}")
         
     # final solution
-    h_tildes[N_mcmc, :], Ds[N_mcmc, :] = model(x, Q, u, hs, hn, spectral)
-    us[N_mcmc, :] = u
+    h_tildes[N, :], Ds[N, :] = model(x, S, u, spectral)
+    us[N, :] = u
     if spectral:
-        print("MCMC:", u)
+        print(u)
 
     # save data
-    np.savez("out.npz", N=N_mcmc, x=x, h=h, h0=h0, us=us, h_tildes=h_tildes, Ds=Ds, D0=D0, u0=u0, gamma_inv_12=gamma_inv_12)
+    np.savez("out.npz", N=N, x=x, h=h, us=us, h_tildes=h_tildes, Ds=Ds, m=m, C_inv_12=C_inv_12, gamma_inv_12=gamma_inv_12)
     print("out.npz")
 
 def plots():
@@ -171,20 +174,24 @@ def plots():
     N = d["N"]
     x = d["x"]
     h = d["h"]
-    h0 = d["h0"]
     us = d["us"]
     h_tildes = d["h_tildes"]
     Ds = d["Ds"]
-    u0 = d["u0"]
-    D0 = d["D0"]
+    m = d["m"]
+    C_inv_12 = d["C_inv_12"]
     gamma_inv_12 = d["gamma_inv_12"]
+
+    print(f"A = {us[-1, -2]:1.1e}, B = {us[-1, -1]:1.1e}")
     
     # Plot sum of squared errors in h over time
     fig, ax = plt.subplots()
     errors_h = np.zeros(N)
+    # errors_u = np.zeros(N)
     for i in range(1, N+1):
         errors_h[i-1] = 0.5*matrix_norm(gamma_inv_12, h - h_tildes[i, :])**2
+        # errors_u[i-1] = 0.5*matrix_norm(C_inv_12, m - us[i, :])**2
     ax.semilogy(errors_h, label=r"$\frac{1}{2} || h - \tilde h ||_\Gamma^2$")
+    # ax.semilogy(errors_u, label=r"$\frac{1}{2} || u - m ||_C^2$")
     ax.legend()
     ax.set_xlabel("iteration")
     ax.set_ylabel(r"error")
@@ -196,13 +203,10 @@ def plots():
         
     # Plot difference between EBM model predicted using our D and the true from the model
     fig, ax = plt.subplots()
-    ax.plot(x, h0/1e3, c="gray", label="initial guess")
-    h_max = np.max(h_tildes, axis=0)/1e3
-    h_min = np.min(h_tildes, axis=0)/1e3
-    ax.fill_between(x, h_min, h_max, color="tab:blue", alpha=0.5, lw=0)
-    ax.plot(x, h_tildes[-1, :]/1e3, c="tab:blue", label="mcmc")
-    ax.plot(x, h_tildes[0, :]/1e3, "k--", label="max likelihood")
-    ax.plot(x, h/1e3, c="tab:orange", label="truth")
+    for i in range(9):
+        ax.plot(x, h_tildes[int(i*N/9), :]/1e3, c="tab:blue", alpha=i/9)
+    ax.plot(x, h_tildes[-1, :]/1e3, c="tab:blue", label=r"$\tilde h$")
+    ax.plot(x, h/1e3, c="tab:orange", label=r"$h$")
     ax.set_xlabel(r"latitude $\phi$ (degrees)")
     ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
     ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
@@ -216,15 +220,11 @@ def plots():
 
     # plot final D
     fig, ax = plt.subplots()
-    ax.plot(x, 1e4*D0, c="gray", label="initial guess")
-    D_max = 1e4*np.max(Ds, axis=0)
-    D_min = 1e4*np.min(Ds, axis=0)
-    ax.fill_between(x, D_min, D_max, color="tab:blue", alpha=0.5, lw=0)
-    ax.plot(x, 1e4*Ds[-1, :], c="tab:blue", label="mcmc")
-    ax.plot(x, 1e4*Ds[0, :], "k--", label="max likelihood")
-    d = np.load("data/h_Q_synthetic.npz")
-    D_true = d["D"]
-    ax.plot(x, 1e4*D_true, c="tab:orange", label="truth")
+    ax.plot(x, 1e4*Ds[0, :], label="init. cond.")
+    ax.plot(x, 1e4*Ds[-1, :], label="inverse result")
+    # d = np.load("data/h_Q_synthetic.npz")
+    # D_true = d["D"]
+    # ax.plot(x, 1e4*D_true, label="truth")
     ax.legend()
     ax.set_xlabel(r"latitude $\phi$ (degrees)")
     ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))

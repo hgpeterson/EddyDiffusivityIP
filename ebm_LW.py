@@ -2,15 +2,16 @@ import numpy as np
 from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import splu
 from scipy.special import legendre
+from scipy.interpolate import CubicSpline
+
 import matplotlib.pyplot as plt
 import os
-
 plt.style.use("plots.mplstyle")
 
 # Constants 
-cp = 1005       # specific heat capacity at constant pressure (J kg-1 K-1)
-RH = 0.8        # relative humidity (0-1)
-Lv = 2257000    # latent heat of vaporization (J kg-1)
+cp = 1e3    # specific heat capacity at constant pressure (J kg-1 K-1)
+RH = 0.8    # relative humidity (0-1)
+Lv = 2.26e6 # latent heat of vaporization (J kg-1)
 
 def add_node(rcd, r, c, d):
     """
@@ -84,11 +85,25 @@ class EBM():
 
         # compute eddy diffusivity (kg m-2 s-1)
         if spectral:
-            # using Legendre polynomials
-            legendre_polys = np.zeros((self.n, len(D)))
-            for i in range(len(D)):
-                legendre_polys[:, i] = legendre(i)(x)
-            self.D = np.dot(legendre_polys, D)
+            # # using Legendre polynomials
+            # legendre_polys = np.zeros((self.n, len(D)))
+            # for i in range(len(D)):
+            #     legendre_polys[:, i] = legendre(i)(x)
+            # self.D = np.dot(legendre_polys, D)
+
+            # gaussians at -90:30:90
+            x0 = np.sin(np.pi/180 * np.arange(-90, 91, 30))
+            self.D = np.zeros(len(x))
+            for i in range(len(x0)):
+                self.D += D[i]*np.exp(-(x - x0[i])**2/(2*0.5**2))
+
+            # # just interpolating
+            # cs = CubicSpline(x[1::self.n//(len(D) - 1)], D)
+            # self.D = cs(x) 
+
+            # plt.plot(x, self.D)
+            # plt.savefig("D.png")
+            # os.sys.exit()
         else:
             # given directly
             self.D = D   
@@ -160,27 +175,31 @@ class EBM():
         A, b = self._generate_linear_system()
         h = A.solve(b) 
 
-        return h
+        return np.squeeze(h)
 
-# test problem
-n = 2**7
-x = np.linspace(-1, 1, n)
-S = 1365/4*(1 - 0.3)*np.cos(np.arcsin(x))
-B = 2.09 
-A = 203.3 - 273.15*B
+# # test problem
+# n = 2**7
+# x = np.linspace(-1, 1, n)
+# S = 1365/4*(1 - 0.3)*np.cos(np.arcsin(x))
+# B = 2.09 
+# A = 203.3 - 273.15*B
 
-# D = 2.6e-4*np.ones(n)
-# ebm = EBM(x, S, D, A, B, spectral=False)
+# # D = 2.6e-4*np.ones(n)
+# # ebm = EBM(x, S, D, A, B, spectral=False)
 
-D = np.zeros(20)
-D[0] = 2.6e-4
-D[4] = -1e-4
-ebm = EBM(x, S, D, A, B, spectral=True)
-h = ebm.solve()
+# # D = np.zeros(20)
+# # D[0] = 2.6e-4
+# # D[4] = -1e-4
 
-plt.plot(x, h/1e3)
-plt.xlabel("$x$")
-plt.ylabel("$h$ (kJ kg$^{-1}$)")
-plt.savefig("h.png")
-print("h.png")
-plt.close()
+# d = np.load("out.npz")
+# D = d["us"][-1, :]
+
+# ebm = EBM(x, S, D, A, B, spectral=True)
+# h = ebm.solve()
+
+# plt.plot(x, h/1e3)
+# plt.xlabel("$x$")
+# plt.ylabel("$h$ (kJ kg$^{-1}$)")
+# plt.savefig("h.png")
+# print("h.png")
+# plt.close()

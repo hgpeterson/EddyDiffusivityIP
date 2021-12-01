@@ -2,20 +2,25 @@ import numpy as np
 from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import splu
 from scipy.special import legendre
-# import matplotlib.pyplot as plt
-# import os
 
-def add_node(rcd, r, c, d):
+def add_node(rcd, n, r, c, d):
     """
-        rcd = add_node(rcd, r, c, d)
+        rcd, n = add_node(rcd, n, r, c, d)
 
     Add a node to a CSC sparse matrix defined by `rcd`. The new node is of the form
         row = `r`
         column = `c`
         data = `d`
-    and `rcd` is an N x 3 array of rows, columns, and data.
+    and `rcd` is an N x 3 array of rows, columns, and data. The new node is in the
+    `n`th row.
     """
-    return np.append(rcd, [[r, c, d]], axis=0)
+    if n >= rcd.shape[0]:
+        # double number of rows if you run out
+        rcd0 = np.copy(rcd)
+        rcd = np.zeros((rcd0.shape[0]*2, 3))
+        rcd[:n, :] = rcd0
+    rcd[n, :] = [r, c, d]
+    return rcd, n+1
 
 def basis_vector(I, i):
     """
@@ -86,8 +91,9 @@ class EBM():
             A h = b
         we wish to solve. We use the stamping method.
         """
-        rcd = np.empty([0, 3])    # row-column-data array: components of CSC matrix A
-        b = np.zeros((self.n, 1)) # right-hand-side vector b
+        rcd = np.zeros((self.n, 3)) # row-column-data array: components of CSC matrix A
+        n = 0                       # current row
+        b = np.zeros((self.n, 1))   # right-hand-side vector b
 
         # assemble A and b using stamping
         for i in range(self.n-1):
@@ -110,18 +116,18 @@ class EBM():
 
             # stamp integral componenta for interior nodes
             if i != 0:
-                rcd   = add_node(rcd, i, i,     m0*m0*intD)
-                rcd   = add_node(rcd, i, i+1,   m0*m1*intD)
+                rcd, n = add_node(rcd, n, i, i,     m0*m0*intD)
+                rcd, n = add_node(rcd, n, i, i+1,   m0*m1*intD)
                 b[i] += intQ0
             if i != self.n-2:
-                rcd     = add_node(rcd, i+1, i,   m1*m0*intD)
-                rcd     = add_node(rcd, i+1, i+1, m1*m1*intD)
+                rcd, n = add_node(rcd, n, i+1, i,   m1*m0*intD)
+                rcd, n = add_node(rcd, n, i+1, i+1, m1*m1*intD)
                 b[i+1] += intQ1
 
         # set h on boundaries
-        rcd         = add_node(rcd, 0, 0, 1)
-        rcd         = add_node(rcd, self.n-1, self.n-1, 1)
-        b[0]        = self.hs # south pole
+        rcd, n = add_node(rcd, n, 0, 0, 1)
+        rcd, n = add_node(rcd, n, self.n-1, self.n-1, 1)
+        b[0] = self.hs # south pole
         b[self.n-1] = self.hn # north pole
 
         # assemble sparse matrix
