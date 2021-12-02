@@ -186,12 +186,12 @@ def main(mdl):
         print(u)
 
     # save data
-    np.savez("out.npz", N=N, x=x, h=h, us=us, h_tildes=h_tildes, Ds=Ds, m=m, C_inv_12=C_inv_12, gamma_inv_12=gamma_inv_12)
+    np.savez("out_" + str(mdl) + ".npz", N=N, x=x, h=h, us=us, h_tildes=h_tildes, Ds=Ds, m=m, C_inv_12=C_inv_12, gamma_inv_12=gamma_inv_12)
     print("out.npz")
 
 def plots(model):
     # load data
-    d= np.load("out.npz")
+    d= np.load("out_" + str(mdl) + ".npz")
     N = d["N"]
     x = d["x"]
     h = d["h"]
@@ -288,9 +288,9 @@ def plots(model):
 
 
 if __name__ == '__main__':
+    for mdl in ["h_Q_ACCESS1-0", "h_Q_ACCESS1-3", "h_Q_GFDL-ESM2G", "h_Q_GFDL-ESM2M", "h_Q_IPSL-CM5ALR", "h_Q_MPI-ESMLR", "h_Q_MRI-CGCM3", "h_Q_NOR-ESM1M" ]:
+#    for mdl in ["h_Q_CAN-ESM2" ]:
 #    for mdl in ["h_Q_CAN-ESM2", "h_Q_CNRM-CM5", "h_Q_GFDL-CM3", "h_Q_MIROC-ESM", "h_Q_INM-CM4"]:
-#    for mdl in ["h_Q_ACCESS1-0", "h_Q_ACCESS1-3", "h_Q_GFDL-ESM2G", "h_Q_GFDL-ESM2M", "h_Q_IPSL-CM5ALR", "h_Q_MPI-ESMLR", "h_Q_MRI-CGCM3", "h_Q_NOR-ESM1M" ]:
-    for mdl in ["h_Q_CAN-ESM2" ]:
         main(mdl)
         plots(mdl)
         
