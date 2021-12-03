@@ -20,15 +20,16 @@ def data():
     """
     # TO DO: Add argument for different models
     # d = np.load("data/h_Q_CNRM-CM5.npz")
-    d = np.load("data/h_Q_synthetic.npz")
+    # d = np.load("data/h_Q_synthetic.npz")
+    d = np.load("data/h_Q_CAN-ESM2.npz")
     h = d["h"]
     x = d["x"]
     Q = d["Q"]
     hs = h[0]
     hn = h[-1]
 
-    # add noise to h?
-    h += np.random.normal(loc=0.0, scale=np.mean(h)/100, size=h.shape)
+    # # add noise to h?
+    # h += np.random.normal(loc=0.0, scale=np.mean(h)/100, size=h.shape)
 
     return h, x, Q, hs, hn
 
@@ -90,12 +91,12 @@ def main():
 
     # spectral 
     spectral = True
-    # n_polys = 10
-    n_polys = 5
+    n_polys = 10
+    # n_polys = 5
     u0 = np.zeros(n_polys)
-    u0[0] = 4e-4
-    # u0[0] = 3.1e-4
-    # u0[4] = -1e-4
+    # u0[0] = 4e-4
+    u0[0] = 2.6e-4
+    u0[4] = -1e-4
     C = 1e-11*np.identity(len(u0))
 
     # iterations 
@@ -130,7 +131,7 @@ def main():
     Ds = np.zeros((N_mcmc + 1, len(x)))
 
     # different C for MCMC
-    C = 1e-12*np.identity(len(u))
+    C = 1e-13*np.identity(len(u))
 
     # second loop: Metropolis-Hastings
     for i in range(N_mcmc): 
@@ -187,9 +188,7 @@ def plots():
     ax.semilogy(errors_h, label=r"$\frac{1}{2} || h - \tilde h ||_\Gamma^2$")
     ax.legend()
     ax.set_xlabel("iteration")
-    ax.set_ylabel(r"error")
-    # plt.savefig("error.pdf")
-    # print("error.pdf")
+    ax.set_ylabel("error")
     plt.savefig("error.png")
     print("error.png")
     plt.close()
@@ -208,8 +207,6 @@ def plots():
     ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
     ax.set_ylabel("moist static energy $h$ (kJ kg$^{-1}$)")
     plt.legend()
-    # plt.savefig("h.pdf")
-    # print("h.pdf")
     plt.savefig("h.png")
     print("h.png")
     plt.close()
@@ -222,20 +219,68 @@ def plots():
     ax.fill_between(x, D_min, D_max, color="tab:blue", alpha=0.5, lw=0)
     ax.plot(x, 1e4*Ds[-1, :], c="tab:blue", label="mcmc")
     ax.plot(x, 1e4*Ds[0, :], "k--", label="max likelihood")
-    d = np.load("data/h_Q_synthetic.npz")
-    D_true = d["D"]
-    ax.plot(x, 1e4*D_true, c="tab:orange", label="truth")
+    # d = np.load("data/h_Q_synthetic.npz")
+    # D_true = d["D"]
+    # ax.plot(x, 1e4*D_true, c="tab:orange", label="truth")
     ax.legend()
     ax.set_xlabel(r"latitude $\phi$ (degrees)")
     ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
     ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
     plt.ylabel(r"diffusivity $D$ ($\times 10^{-4}$ kg m$^{-2}$ s$^{-1}$)")
-    # plt.savefig('D.pdf')
-    # print("D.pdf")
     plt.savefig('D.png')
     print("D.png")
     plt.close()
 
+def plots_report():
+    # load data
+    d= np.load("sims/synth_noise/out.npz")
+    N = d["N"]
+    x = d["x"]
+    h = d["h"]
+    h0 = d["h0"]
+    us = d["us"]
+    h_tildes = d["h_tildes"]
+    Ds = d["Ds"]
+    u0 = d["u0"]
+    D0 = d["D0"]
+    gamma_inv_12 = d["gamma_inv_12"]
+    
+    fig, ax = plt.subplots(1, 2, figsize=(6.5, 6.5/1.62/2))
+    ax[0].plot(x, h0/1e3, c="gray", label="initial guess")
+    h_max = np.max(h_tildes, axis=0)/1e3
+    h_min = np.min(h_tildes, axis=0)/1e3
+    ax[0].fill_between(x, h_min, h_max, color="tab:blue", alpha=0.5, lw=0)
+    ax[0].plot(x, h_tildes[-1, :]/1e3, c="tab:blue", label="mcmc")
+    ax[0].plot(x, h_tildes[0, :]/1e3, "k--", label="max likelihood")
+    ax[0].plot(x, h/1e3, c="tab:orange", label="truth")
+    ax[0].set_xlabel(r"latitude $\phi$ (degrees)")
+    ax[0].set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
+    ax[0].set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
+    ax[0].set_ylabel("moist static energy $h$ (kJ kg$^{-1}$)")
+    ax[0].legend()
+
+    ax[1].plot(x, 1e4*D0, c="gray", label="initial guess")
+    D_max = 1e4*np.max(Ds, axis=0)
+    D_min = 1e4*np.min(Ds, axis=0)
+    ax[1].fill_between(x, D_min, D_max, color="tab:blue", alpha=0.5, lw=0)
+    ax[1].plot(x, 1e4*Ds[-1, :], c="tab:blue", label="mcmc")
+    ax[1].plot(x, 1e4*Ds[0, :], "k--", label="max likelihood")
+    d = np.load("data/h_Q_synthetic.npz")
+    D_true = d["D"]
+    ax[1].plot(x, 1e4*D_true, c="tab:orange", label="truth")
+    ax[1].set_xlabel(r"latitude $\phi$ (degrees)")
+    ax[1].set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
+    ax[1].set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
+    plt.ylabel(r"diffusivity $D$ ($\times 10^{-4}$ kg m$^{-2}$ s$^{-1}$)")
+
+    ax[0].annotate("(a)", (-0.05, 1.05), xycoords="axes fraction")
+    ax[1].annotate("(b)", (-0.05, 1.05), xycoords="axes fraction")
+
+    plt.savefig('synth_mcmc.pdf')
+    print("synth_mcmc.pdf")
+    plt.close()
+
 if __name__ == '__main__':
-    main()
-    plots()
+    # main()
+    # plots()
+    plots_report()

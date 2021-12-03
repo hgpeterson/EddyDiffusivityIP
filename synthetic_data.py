@@ -20,39 +20,35 @@ D[4] = -1e-4
 ebm = EBM(x, Q, D, hs, hn, spectral=spectral)
 h = ebm.solve()
 
-# save
-np.savez("data/h_Q_synthetic.npz", h=h, Q=Q, x=x, D=ebm.D)
-print("data/h_Q_synthetic.npz")
+# # save
+# np.savez("data/h_Q_synthetic.npz", h=h, Q=Q, x=x, D=ebm.D)
+# print("data/h_Q_synthetic.npz")
 
-# plot Q
-fig, ax = plt.subplots()
-ax.plot(x, Q)
-ax.set_xlabel(r"latitude $\phi$ (degrees)")
-ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
-ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
-ax.set_ylabel(r"net energy input $Q$ (W m$^{-2}$)")
-plt.savefig("Q.png")
-print("Q.png")
-plt.close()
+fig, ax = plt.subplots(1, 3, figsize=(6.5, 6.5/1.62/3))
 
-# plot D
-fig, ax = plt.subplots()
-ax.plot(x, 1e4*ebm.D)
-ax.set_xlabel(r"latitude $\phi$ (degrees)")
-ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
-ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
-ax.set_ylabel(r"diffusivity $D$ ($\times 10^{-4}$ kg m$^{-2}$ s$^{-1}$)")
-plt.savefig("D.png")
-print("D.png")
-plt.close()
+ax[0].plot(x, Q)
+ax[0].set_xlabel(r"latitude $\phi$ (degrees)")
+ax[0].set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
+ax[0].set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
+ax[0].set_ylabel("$Q$ (W m$^{-2}$)")
+ax[0].annotate("(a) net energy input", (-0.05, 1.05), xycoords="axes fraction")
 
-# plot
-fig, ax = plt.subplots()
-ax.plot(x, h/1e3)
-ax.set_xlabel(r"latitude $\phi$ (degrees)")
-ax.set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
-ax.set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
-ax.set_ylabel("moist static energy $h$ (kJ kg$^{-1}$)")
-plt.savefig("h.png")
-print("h.png")
+ax[1].plot(x, 1e4*ebm.D)
+ax[1].set_xlabel(r"latitude $\phi$ (degrees)")
+ax[1].set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
+ax[1].set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
+ax[1].set_ylabel(r"$D$ ($\times 10^{-4}$ kg m$^{-2}$ s$^{-1}$)")
+ax[1].annotate("(b) diffusivity", (-0.05, 1.05), xycoords="axes fraction")
+
+ax[2].plot(x, h/1e3)
+ax[2].set_xlabel(r"latitude $\phi$ (degrees)")
+ax[2].set_xticks(np.sin(np.deg2rad(np.arange(-90, 91, 10))))
+ax[2].set_xticklabels(["90°S", "", "", "", "", "", "30°S", "", "", "EQ", "", "", "30°N", "", "", "", "", "", "90°N"])
+ax[2].set_ylabel("$h$ (kJ kg$^{-1}$)")
+ax[2].annotate("(c) moist static energy", (-0.05, 1.05), xycoords="axes fraction")
+
+plt.subplots_adjust(wspace=0.4)
+
+plt.savefig("synth.pdf")
+print("synth.pdf")
 plt.close()
